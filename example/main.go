@@ -10,7 +10,9 @@ import (
 )
 
 func main() {
-	ofs, err := ocifs.New()
+	ofs, err := ocifs.New(ocifs.WithExtraDirs([]string{
+		"/proc", "/sys", "/dev", "/dev/pts", "/dev/shm",
+	}))
 	if err != nil {
 		slog.Error("failed to create ocifs", "msg", err)
 		os.Exit(1)
