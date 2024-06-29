@@ -2,6 +2,7 @@ package container
 
 import (
 	"encoding/json"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -16,10 +17,13 @@ func init() {
 }
 
 type Container struct {
-	id  string
-	cfg Config
-	stf string
-	cmd *exec.Cmd
+	id         string
+	cfg        Config
+	stf        string
+	cmd        *exec.Cmd
+	stdinPipe  io.WriteCloser
+	stdoutPipe io.ReadCloser
+	stderrPipe io.ReadCloser
 }
 
 func New(statedir, id string, cfg Config) (*Container, error) {
@@ -49,9 +53,36 @@ func (c *Container) Run(p *Process) error {
 		GidMappings: c.cfg.GidMappings,
 		Credential:  p.Credential,
 	}
-	cmd.Stdin = p.Stdin
-	cmd.Stdout = p.Stdout
-	cmd.Stderr = p.Stderr
+
+	if p.StdinPipe {
+		pipe, err := cmd.StdinPipe()
+		if err != nil {
+			return err
+		}
+		c.stdinPipe = pipe
+	} else {
+		cmd.Stdin = p.Stdin
+	}
+
+	if p.StdoutPipe {
+		pipe, err := cmd.StdoutPipe()
+		if err != nil {
+			return err
+		}
+		c.stdoutPipe = pipe
+	} else {
+		cmd.Stdout = p.Stdout
+	}
+
+	if p.StderrPipe {
+		pipe, err := cmd.StderrPipe()
+		if err != nil {
+			return err
+		}
+		c.stderrPipe = pipe
+	} else {
+		cmd.Stderr = p.Stderr
+	}
 
 	pData, err := json.Marshal(p)
 	if err != nil {
@@ -64,6 +95,27 @@ func (c *Container) Run(p *Process) error {
 	c.cmd = cmd
 
 	return cmd.Start()
+}
+
+func (c *Container) StdinPipe() (io.WriteCloser, error) {
+	if c.stdinPipe == nil {
+		return nil, syscall.EINVAL
+	}
+	return c.stdinPipe, nil
+}
+
+func (c *Container) StdoutPipe() (io.ReadCloser, error) {
+	if c.stdoutPipe == nil {
+		return nil, syscall.EINVAL
+	}
+	return c.stdoutPipe, nil
+}
+
+func (c *Container) StderrPipe() (io.ReadCloser, error) {
+	if c.stderrPipe == nil {
+		return nil, syscall.EINVAL
+	}
+	return c.stderrPipe, nil
 }
 
 func (c *Container) Wait() error {

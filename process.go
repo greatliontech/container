@@ -16,4 +16,7 @@ type Process struct {
 	Stdin      io.Reader `json:"-"`
 	Stdout     io.Writer `json:"-"`
 	Stderr     io.Writer `json:"-"`
+	StdinPipe  bool      `json:"-"`
+	StdoutPipe bool      `json:"-"`
+	StderrPipe bool      `json:"-"`
 }
