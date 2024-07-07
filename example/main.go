@@ -78,7 +78,7 @@ func main() {
 		},
 	}
 
-	cont, err := container.New("/tmp/contstate", contID, cfg)
+	cont, err := container.New("/tmp/contstatetest", contID, cfg)
 	if err != nil {
 		slog.Error("failed to create container", "msg", err)
 		os.Exit(1)

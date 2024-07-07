@@ -124,11 +124,22 @@ func (c *Container) Wait() error {
 
 func child() {
 	if len(os.Args) < 3 {
-		slog.Error("missing arguments")
 		os.Exit(1)
 	}
 	stf := os.Args[2]
 	pf := stf + ".process"
+	lfPath := stf + ".log"
+
+	lf, err := os.Create(lfPath)
+	if err != nil {
+		os.Exit(2)
+	}
+	defer lf.Close()
+
+	loggr := slog.New(slog.NewTextHandler(lf, nil))
+	slog.SetDefault(loggr)
+
+	slog.Info("child started", "stf", stf)
 
 	cfgData, err := os.ReadFile(stf)
 	if err != nil {
