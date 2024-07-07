@@ -55,6 +55,7 @@ func (c *Container) Run(p *Process) error {
 	}
 
 	if p.StdinPipe {
+		slog.Info("stdin pipe requested")
 		pipe, err := cmd.StdinPipe()
 		if err != nil {
 			return err
@@ -65,6 +66,7 @@ func (c *Container) Run(p *Process) error {
 	}
 
 	if p.StdoutPipe {
+		slog.Info("stdout pipe requested")
 		pipe, err := cmd.StdoutPipe()
 		if err != nil {
 			return err
@@ -75,6 +77,7 @@ func (c *Container) Run(p *Process) error {
 	}
 
 	if p.StderrPipe {
+		slog.Info("stderr pipe requested")
 		pipe, err := cmd.StderrPipe()
 		if err != nil {
 			return err
@@ -94,6 +97,7 @@ func (c *Container) Run(p *Process) error {
 
 	c.cmd = cmd
 
+	slog.Info("starting child", "cmd", cmd.Path, "args", cmd.Args)
 	return cmd.Start()
 }
 
