@@ -122,7 +122,7 @@ The runtime currently implements:
 
 - [x] Port mapping (host:container)
 - [x] Support TCP and UDP
-- [x] iptables rules management
+- [x] nftables rules management (pure Go via `github.com/google/nftables`)
 
 ### 3.4 DNS Configuration
 

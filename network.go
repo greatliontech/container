@@ -238,14 +238,16 @@ func SetupContainerNetwork(pid int, config NetworkConfig) (*Network, error) {
 			}
 		}
 
-		pf := NewPortForwarder(ip, bridgeName)
-		for _, pm := range config.PortMappings {
-			if err := pf.AddMapping(pm); err != nil {
-				// Log but don't fail - port forwarding is optional
-				continue
+		pf, err := NewPortForwarder(ip, bridgeName)
+		if err == nil {
+			for _, pm := range config.PortMappings {
+				if err := pf.AddMapping(pm); err != nil {
+					// Log but don't fail - port forwarding is optional
+					continue
+				}
 			}
+			net.portForwarder = pf
 		}
-		net.portForwarder = pf
 	}
 
 	return net, nil

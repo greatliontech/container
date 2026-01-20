@@ -1,9 +1,10 @@
 module github.com/greatliontech/container
 
-go 1.23.0
+go 1.25
 
 require (
 	github.com/elastic/go-seccomp-bpf v1.6.0
+	github.com/google/nftables v0.3.0
 	github.com/greatliontech/ocifs v0.0.0-20240626155415-aafbd4a35bf2
 	github.com/vishvananda/netlink v1.3.1
 	github.com/vishvananda/netns v0.0.5
@@ -16,10 +17,13 @@ require (
 	github.com/docker/cli v27.0.1+incompatible // indirect
 	github.com/docker/distribution v2.8.3+incompatible // indirect
 	github.com/docker/docker-credential-helpers v0.8.2 // indirect
+	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/go-containerregistry v0.19.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hanwen/go-fuse/v2 v2.5.1 // indirect
 	github.com/klauspost/compress v1.17.9 // indirect
+	github.com/mdlayher/netlink v1.7.3-0.20250113171957-fbb4dce95f42 // indirect
+	github.com/mdlayher/socket v0.5.0 // indirect
 	github.com/mitchellh/go-homedir v1.1.0 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.0 // indirect
