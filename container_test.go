@@ -598,9 +598,11 @@ func TestContainer_Signal(t *testing.T) {
 	t.Log("TestContainer_Signal: waiting for process to start...")
 	time.Sleep(100 * time.Millisecond)
 
-	// Send SIGTERM
-	t.Log("TestContainer_Signal: sending SIGTERM...")
-	if err := c.Signal(syscall.SIGTERM); err != nil {
+	// Send SIGKILL - we use SIGKILL because PID 1 processes in a new PID namespace
+	// ignore most signals (including SIGTERM) unless they have explicit handlers.
+	// This is a Linux kernel protection for init processes.
+	t.Log("TestContainer_Signal: sending SIGKILL...")
+	if err := c.Signal(syscall.SIGKILL); err != nil {
 		t.Errorf("Signal failed: %v", err)
 	}
 
@@ -615,7 +617,7 @@ func TestContainer_Signal(t *testing.T) {
 	case <-done:
 		t.Log("TestContainer_Signal: container stopped")
 	case <-time.After(5 * time.Second):
-		t.Error("container did not stop after SIGTERM")
+		t.Error("container did not stop after SIGKILL")
 	}
 	t.Log("TestContainer_Signal: done")
 }

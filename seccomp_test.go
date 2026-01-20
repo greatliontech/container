@@ -68,8 +68,7 @@ func TestDefaultSeccompProfile(t *testing.T) {
 		"io_uring_register",
 		// Ptrace
 		"ptrace",
-		// Personality (can disable ASLR)
-		"personality",
+		// Note: personality is NOT blocked as it breaks many applications
 	}
 
 	for _, syscall := range dangerousSyscalls {

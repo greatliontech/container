@@ -159,6 +159,10 @@ func createDevices(devices []Device) error {
 		if err := unix.Mknod(dev.Path, mode, int(devNum)); err != nil {
 			return err
 		}
+		// Explicitly set permissions to override umask
+		if err := unix.Chmod(dev.Path, dev.Mode); err != nil {
+			return err
+		}
 		if err := unix.Chown(dev.Path, int(dev.Uid), int(dev.Gid)); err != nil {
 			return err
 		}

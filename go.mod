@@ -8,7 +8,7 @@ require (
 	github.com/greatliontech/ocifs v0.0.0-20240626155415-aafbd4a35bf2
 	github.com/vishvananda/netlink v1.3.1
 	github.com/vishvananda/netns v0.0.5
-	golang.org/x/sys v0.33.0
+	golang.org/x/sys v0.40.0
 	kernel.org/pub/linux/libs/security/libcap/cap v1.2.77
 )
 

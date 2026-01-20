@@ -57,9 +57,11 @@ func ExecWithNsenter(pid int, config ExecConfig) (*exec.Cmd, error) {
 		"--pid",
 	}
 
-	// Try to enter user namespace if it exists
-	userNsPath := fmt.Sprintf("/proc/%d/ns/user", pid)
-	if _, err := os.Stat(userNsPath); err == nil {
+	// Only enter user namespace if target is in a different user namespace than us
+	// Every process has /proc/PID/ns/user, but entering the same namespace fails
+	targetUserNs, err1 := os.Readlink(fmt.Sprintf("/proc/%d/ns/user", pid))
+	selfUserNs, err2 := os.Readlink("/proc/self/ns/user")
+	if err1 == nil && err2 == nil && targetUserNs != selfUserNs {
 		args = append(args, "--user")
 	}
 
@@ -90,10 +92,17 @@ func ExecWithNsenter(pid int, config ExecConfig) (*exec.Cmd, error) {
 	return cmd, nil
 }
 
-// ExecNoUserNs executes in container namespaces except user namespace
-// This works from Go because we don't need to enter user namespace
-// Use this when the container doesn't use user namespaces or when
-// you have sufficient privileges without entering user namespace
+// ExecNoUserNs executes in container namespaces except user namespace.
+//
+// WARNING: This function has significant limitations due to Go's runtime being
+// multithreaded. The setns() syscall for mount namespace requires a single-threaded
+// process, which Go cannot guarantee. This will likely fail with EINVAL.
+//
+// For reliable exec into containers, use ExecWithNsenter instead, which delegates
+// to the nsenter(1) utility (a single-threaded C program).
+//
+// This function is kept for cases where you only need to enter non-mount namespaces
+// or when called very early before Go's runtime spawns additional threads.
 func ExecNoUserNs(pid int, config ExecConfig) error {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()

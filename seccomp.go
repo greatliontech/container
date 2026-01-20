@@ -1,6 +1,8 @@
 package container
 
 import (
+	"encoding/json"
+
 	"github.com/elastic/go-seccomp-bpf"
 )
 
@@ -10,6 +12,50 @@ type SeccompProfile struct {
 	DefaultAction seccomp.Action
 	// Syscalls defines the syscall filtering rules
 	Syscalls []seccomp.SyscallGroup
+}
+
+// seccompProfileJSON is a JSON-friendly version of SeccompProfile
+type seccompProfileJSON struct {
+	DefaultAction uint32             `json:"default_action"`
+	Syscalls      []syscallGroupJSON `json:"syscalls"`
+}
+
+// syscallGroupJSON is a JSON-friendly version of seccomp.SyscallGroup
+type syscallGroupJSON struct {
+	Action uint32   `json:"action"`
+	Names  []string `json:"names"`
+}
+
+// MarshalJSON implements json.Marshaler for SeccompProfile
+func (p *SeccompProfile) MarshalJSON() ([]byte, error) {
+	jp := seccompProfileJSON{
+		DefaultAction: uint32(p.DefaultAction),
+		Syscalls:      make([]syscallGroupJSON, len(p.Syscalls)),
+	}
+	for i, sg := range p.Syscalls {
+		jp.Syscalls[i] = syscallGroupJSON{
+			Action: uint32(sg.Action),
+			Names:  sg.Names,
+		}
+	}
+	return json.Marshal(jp)
+}
+
+// UnmarshalJSON implements json.Unmarshaler for SeccompProfile
+func (p *SeccompProfile) UnmarshalJSON(data []byte) error {
+	var jp seccompProfileJSON
+	if err := json.Unmarshal(data, &jp); err != nil {
+		return err
+	}
+	p.DefaultAction = seccomp.Action(jp.DefaultAction)
+	p.Syscalls = make([]seccomp.SyscallGroup, len(jp.Syscalls))
+	for i, sg := range jp.Syscalls {
+		p.Syscalls[i] = seccomp.SyscallGroup{
+			Action: seccomp.Action(sg.Action),
+			Names:  sg.Names,
+		}
+	}
+	return nil
 }
 
 // DefaultSeccompProfile returns a restrictive seccomp profile suitable for containers.
@@ -87,11 +133,9 @@ func DefaultSeccompProfile() *SeccompProfile {
 				Action: seccomp.ActionErrno,
 				Names:  []string{"ptrace"},
 			},
-			// Block personality changes (used to disable ASLR)
-			{
-				Action: seccomp.ActionErrno,
-				Names:  []string{"personality"},
-			},
+			// Note: personality is NOT blocked as it's commonly used by programs
+			// during startup to query system capabilities. Blocking it breaks
+			// many applications including busybox.
 		},
 	}
 }

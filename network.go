@@ -84,6 +84,7 @@ func EnsureBridge(name string) (netlink.Link, error) {
 	// Create new bridge
 	la := netlink.NewLinkAttrs()
 	la.Name = name
+	la.TxQLen = -1 // Use system default (avoids ERANGE on some systems)
 	bridge := &netlink.Bridge{LinkAttrs: la}
 
 	if err := netlink.LinkAdd(bridge); err != nil {

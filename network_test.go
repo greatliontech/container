@@ -299,7 +299,7 @@ func TestEnsureBridge_Create(t *testing.T) {
 	skipIfNotRoot(t)
 	skipIfNoNetwork(t)
 
-	bridgeName := "test-br-" + generateTestID(t)[:8]
+	bridgeName := "tbr" + generateTestID(t)[5:12] // Max 15 chars for interface name
 	defer func() {
 		// Cleanup
 		if link, err := netlink.LinkByName(bridgeName); err == nil {
@@ -337,7 +337,7 @@ func TestEnsureBridge_Idempotent(t *testing.T) {
 	skipIfNotRoot(t)
 	skipIfNoNetwork(t)
 
-	bridgeName := "test-br-" + generateTestID(t)[:8]
+	bridgeName := "tbr" + generateTestID(t)[5:12] // Max 15 chars for interface name
 	defer func() {
 		if link, err := netlink.LinkByName(bridgeName); err == nil {
 			netlink.LinkDel(link)

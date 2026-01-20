@@ -4,7 +4,9 @@ package container
 
 import (
 	"bytes"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -40,15 +42,23 @@ func TestIntegration_SeccompBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	defer c.Destroy()
+	defer func() {
+		// Read child log before cleanup
+		logPath := filepath.Join(stateDir, containerID+".log")
+		if data, err := os.ReadFile(logPath); err == nil {
+			t.Logf("Child log:\n%s", string(data))
+		}
+		c.Destroy()
+	}()
 
 	// Try to reboot (should fail with EPERM due to seccomp)
 	// We can't easily test this directly, but we can verify the profile is applied
-	var stdout bytes.Buffer
+	var stdout, stderr bytes.Buffer
 	proc := &Process{
 		Cmd:    "/bin/sh",
 		Args:   []string{"-c", "echo seccomp_test"},
 		Stdout: &stdout,
+		Stderr: &stderr,
 	}
 
 	t.Log("TestIntegration_SeccompBlocks: running...")
@@ -62,9 +72,10 @@ func TestIntegration_SeccompBlocks(t *testing.T) {
 	}
 
 	output := strings.TrimSpace(stdout.String())
-	t.Logf("TestIntegration_SeccompBlocks: output=%q", output)
+	errOutput := strings.TrimSpace(stderr.String())
+	t.Logf("TestIntegration_SeccompBlocks: stdout=%q stderr=%q", output, errOutput)
 	if output != "seccomp_test" {
-		t.Errorf("unexpected output: %s", output)
+		t.Errorf("unexpected output: %s (stderr: %s)", output, errOutput)
 	}
 	t.Log("TestIntegration_SeccompBlocks: done")
 }
@@ -714,4 +725,292 @@ func TestIntegration_MultipleNamespaceIsolation(t *testing.T) {
 		t.Error("UTS namespace isolation not working (hostname)")
 	}
 	t.Log("TestIntegration_MultipleNamespaceIsolation: done")
+}
+
+func TestIntegration_ExecWithNsenter(t *testing.T) {
+	skipIfNotRoot(t)
+
+	t.Log("TestIntegration_ExecWithNsenter: starting...")
+	rootfs := createTestRootfs(t)
+	stateDir := t.TempDir()
+	containerID := generateTestID(t)
+
+	cfg := Config{
+		Root: rootfs,
+		Namespaces: Namespaces{
+			NewIPC: true,
+			NewMnt: true,
+			NewPID: true,
+			NewUTS: true,
+		},
+		Hostname:     "exec-test",
+		UsePivotRoot: true,
+		SetupDev:     true,
+	}
+
+	t.Log("TestIntegration_ExecWithNsenter: creating container...")
+	c, err := New(stateDir, containerID, cfg)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	defer func() {
+		logPath := filepath.Join(stateDir, containerID+".log")
+		if data, err := os.ReadFile(logPath); err == nil {
+			t.Logf("Child log:\n%s", string(data))
+		}
+		c.Destroy()
+	}()
+
+	// Start container with sleep to keep it running
+	var stdout, stderr bytes.Buffer
+	proc := &Process{
+		Cmd:    "/bin/sleep",
+		Args:   []string{"30"},
+		Stdout: &stdout,
+		Stderr: &stderr,
+	}
+
+	t.Log("TestIntegration_ExecWithNsenter: running container...")
+	if err := c.Run(proc); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	// Give the container a moment to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Exec into the running container
+	var execStdout, execStderr bytes.Buffer
+	execCfg := ExecConfig{
+		Cmd:    "/bin/hostname",
+		Stdout: &execStdout,
+		Stderr: &execStderr,
+	}
+
+	t.Log("TestIntegration_ExecWithNsenter: execing into container...")
+	cmd, err := c.Exec(execCfg)
+	if err != nil {
+		t.Fatalf("Exec failed: %v", err)
+	}
+
+	if err := cmd.Run(); err != nil {
+		t.Logf("Exec stderr: %s", execStderr.String())
+		t.Fatalf("Exec command failed: %v", err)
+	}
+
+	execOutput := strings.TrimSpace(execStdout.String())
+	t.Logf("TestIntegration_ExecWithNsenter: exec output=%q", execOutput)
+
+	// Verify we're in the container's UTS namespace (should see container hostname)
+	if execOutput != "exec-test" {
+		t.Errorf("Exec hostname = %q, want %q (not in container's UTS namespace?)", execOutput, "exec-test")
+	}
+
+	// Stop the container
+	t.Log("TestIntegration_ExecWithNsenter: stopping container...")
+	if err := c.Signal(syscall.SIGKILL); err != nil {
+		t.Logf("Signal failed: %v", err)
+	}
+	c.Wait()
+
+	t.Log("TestIntegration_ExecWithNsenter: done")
+}
+
+func TestIntegration_ExecWithNsenter_UserNs(t *testing.T) {
+	skipIfNotRoot(t)
+
+	t.Log("TestIntegration_ExecWithNsenter_UserNs: starting...")
+	rootfs := createTestRootfs(t)
+	stateDir := t.TempDir()
+	containerID := generateTestID(t)
+
+	cfg := Config{
+		Root: rootfs,
+		Namespaces: Namespaces{
+			NewIPC:  true,
+			NewMnt:  true,
+			NewPID:  true,
+			NewUTS:  true,
+			NewUser: true, // Enable user namespace
+		},
+		UidMappings:  []syscall.SysProcIDMap{{ContainerID: 0, HostID: 0, Size: 65536}},
+		GidMappings:  []syscall.SysProcIDMap{{ContainerID: 0, HostID: 0, Size: 65536}},
+		Hostname:     "userns-exec",
+		UsePivotRoot: true,
+		SetupDev:     false, // Can't create devices in user namespace (no CAP_MKNOD)
+	}
+
+	t.Log("TestIntegration_ExecWithNsenter_UserNs: creating container...")
+	c, err := New(stateDir, containerID, cfg)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	defer func() {
+		logPath := filepath.Join(stateDir, containerID+".log")
+		if data, err := os.ReadFile(logPath); err == nil {
+			t.Logf("Child log:\n%s", string(data))
+		}
+		c.Destroy()
+	}()
+
+	// Start container with sleep to keep it running
+	var stdout, stderr bytes.Buffer
+	proc := &Process{
+		Cmd:    "/bin/sleep",
+		Args:   []string{"30"},
+		Stdout: &stdout,
+		Stderr: &stderr,
+	}
+
+	t.Log("TestIntegration_ExecWithNsenter_UserNs: running container...")
+	if err := c.Run(proc); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	// Give the container a moment to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify container is in a different user namespace
+	containerPid := c.Pid()
+	targetUserNs, _ := os.Readlink(fmt.Sprintf("/proc/%d/ns/user", containerPid))
+	selfUserNs, _ := os.Readlink("/proc/self/ns/user")
+	t.Logf("Container user ns: %s, Self user ns: %s", targetUserNs, selfUserNs)
+	if targetUserNs == selfUserNs {
+		t.Log("Warning: container is in same user namespace as host")
+	}
+
+	// Exec into the running container
+	var execStdout, execStderr bytes.Buffer
+	execCfg := ExecConfig{
+		Cmd:    "/bin/sh",
+		Args:   []string{"-c", "/bin/hostname && /bin/id"},
+		Stdout: &execStdout,
+		Stderr: &execStderr,
+	}
+
+	t.Log("TestIntegration_ExecWithNsenter_UserNs: execing into container...")
+	cmd, err := c.Exec(execCfg)
+	if err != nil {
+		t.Fatalf("Exec failed: %v", err)
+	}
+
+	if err := cmd.Run(); err != nil {
+		t.Logf("Exec stderr: %s", execStderr.String())
+		t.Fatalf("Exec command failed: %v", err)
+	}
+
+	execOutput := strings.TrimSpace(execStdout.String())
+	t.Logf("TestIntegration_ExecWithNsenter_UserNs: exec output=%q", execOutput)
+
+	// Verify we're in the container's UTS namespace
+	if !strings.Contains(execOutput, "userns-exec") {
+		t.Errorf("Exec output doesn't contain hostname 'userns-exec': %s", execOutput)
+	}
+
+	// Stop the container
+	t.Log("TestIntegration_ExecWithNsenter_UserNs: stopping container...")
+	if err := c.Signal(syscall.SIGKILL); err != nil {
+		t.Logf("Signal failed: %v", err)
+	}
+	c.Wait()
+
+	t.Log("TestIntegration_ExecWithNsenter_UserNs: done")
+}
+
+func TestIntegration_ExecNoUserNs(t *testing.T) {
+	// Skip: ExecNoUserNs uses setns() which requires a single-threaded process.
+	// Go's runtime is inherently multithreaded, making setns to mount namespace fail
+	// with EINVAL. The recommended approach is to use ExecWithNsenter which delegates
+	// to the nsenter(1) utility (a single-threaded C program).
+	// To properly support this in Go would require CGO with a constructor that runs
+	// before Go runtime starts (like runc's nsenter package).
+	t.Skip("ExecNoUserNs requires single-threaded process; use ExecWithNsenter instead")
+
+	skipIfNotRoot(t)
+
+	t.Log("TestIntegration_ExecNoUserNs: starting...")
+	rootfs := createTestRootfs(t)
+	stateDir := t.TempDir()
+	containerID := generateTestID(t)
+
+	cfg := Config{
+		Root: rootfs,
+		Namespaces: Namespaces{
+			NewIPC: true,
+			NewMnt: true,
+			NewPID: true,
+			NewUTS: true,
+			// No NewUser - so ExecNoUserNs path can be used
+		},
+		Hostname:     "execnouserns",
+		UsePivotRoot: true,
+		SetupDev:     true,
+	}
+
+	t.Log("TestIntegration_ExecNoUserNs: creating container...")
+	c, err := New(stateDir, containerID, cfg)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	defer func() {
+		logPath := filepath.Join(stateDir, containerID+".log")
+		if data, err := os.ReadFile(logPath); err == nil {
+			t.Logf("Child log:\n%s", string(data))
+		}
+		c.Destroy()
+	}()
+
+	// Start container with sleep to keep it running
+	var stdout, stderr bytes.Buffer
+	proc := &Process{
+		Cmd:    "/bin/sleep",
+		Args:   []string{"30"},
+		Stdout: &stdout,
+		Stderr: &stderr,
+	}
+
+	t.Log("TestIntegration_ExecNoUserNs: running container...")
+	if err := c.Run(proc); err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+
+	// Give the container a moment to start
+	time.Sleep(100 * time.Millisecond)
+
+	containerPid := c.Pid()
+	t.Logf("TestIntegration_ExecNoUserNs: container pid=%d", containerPid)
+
+	// Test ExecNoUserNs by invoking our binary with __exec
+	// This forks a process that calls ExecNoUserNs
+	var execStdout, execStderr bytes.Buffer
+	selfExe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("failed to get executable: %v", err)
+	}
+
+	execCmd := exec.Command(selfExe, "__exec", fmt.Sprintf("%d", containerPid), "/bin/hostname")
+	execCmd.Stdout = &execStdout
+	execCmd.Stderr = &execStderr
+
+	t.Log("TestIntegration_ExecNoUserNs: execing via __exec...")
+	if err := execCmd.Run(); err != nil {
+		t.Logf("Exec stderr: %s", execStderr.String())
+		t.Fatalf("Exec command failed: %v", err)
+	}
+
+	execOutput := strings.TrimSpace(execStdout.String())
+	t.Logf("TestIntegration_ExecNoUserNs: exec output=%q", execOutput)
+
+	// Verify we're in the container's UTS namespace (should see container hostname)
+	if execOutput != "execnouserns" {
+		t.Errorf("Exec hostname = %q, want %q", execOutput, "execnouserns")
+	}
+
+	// Stop the container
+	t.Log("TestIntegration_ExecNoUserNs: stopping container...")
+	if err := c.Signal(syscall.SIGKILL); err != nil {
+		t.Logf("Signal failed: %v", err)
+	}
+	c.Wait()
+
+	t.Log("TestIntegration_ExecNoUserNs: done")
 }
