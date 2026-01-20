@@ -78,6 +78,36 @@ func main() {
 	// - SetupDev: true (creates /dev with minimal devices)
 	// - NoNewPrivileges: true
 
+	// Resource limits (cgroups v2)
+	// Note: requires cgroups v2 and appropriate permissions
+	cfg.Resources = &container.Resources{
+		Memory: &container.MemoryResources{
+			Max:  512 * 1024 * 1024, // 512MB memory limit
+			High: 256 * 1024 * 1024, // 256MB throttling threshold
+		},
+		CPU: &container.CPUResources{
+			Quota:  50000,  // 50ms per 100ms period = 50% of one CPU
+			Period: 100000, // 100ms period
+		},
+		Pids: &container.PidsResources{
+			Max: 100, // Max 100 processes (fork bomb protection)
+		},
+	}
+
+	// Networking (bridge mode)
+	// Note: requires root privileges and creates network interfaces
+	// Uncomment to enable:
+	// cfg.Network = &container.NetworkConfig{
+	// 	Mode:      container.NetworkModeBridge,
+	// 	Bridge:    "container0",           // bridge name (created if doesn't exist)
+	// 	IPAddress: "10.88.0.2/16",         // container IP
+	// 	Gateway:   "10.88.0.1",            // gateway (bridge IP)
+	// 	DNS:       []string{"8.8.8.8"},    // DNS servers
+	// }
+	// Also write resolv.conf before running:
+	// container.WriteResolvConf(trgtroot, cfg.Network.DNS)
+	// container.WriteHosts(trgtroot, cfg.Hostname, cfg.Network.IPAddress)
+
 	cont, err := container.New("/tmp/contstatetest", contID, cfg)
 	if err != nil {
 		slog.Error("failed to create container", "msg", err)
@@ -98,6 +128,11 @@ func main() {
 
 	if err := cont.Wait(); err != nil {
 		slog.Error("failed to wait", "msg", err)
+	}
+
+	// Clean up container resources (cgroup, state files)
+	if err := cont.Destroy(); err != nil {
+		slog.Error("failed to destroy container", "msg", err)
 	}
 
 	if im.Unmount() != nil {

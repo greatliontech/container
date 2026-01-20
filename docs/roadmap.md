@@ -72,32 +72,32 @@ The runtime currently implements:
 
 ### 2.1 Cgroups v2 Foundation
 
-- [ ] Create cgroup hierarchy for containers
-- [ ] Add `Resources` configuration struct
-- [ ] Implement cgroup cleanup on container exit
+- [x] Create cgroup hierarchy for containers
+- [x] Add `Resources` configuration struct
+- [x] Implement cgroup cleanup on container exit
 
 ### 2.2 Memory Limits
 
-- [ ] `memory.max` - hard memory limit
-- [ ] `memory.high` - memory throttling threshold
-- [ ] `memory.swap.max` - swap limit
+- [x] `memory.max` - hard memory limit
+- [x] `memory.high` - memory throttling threshold
+- [x] `memory.swap.max` - swap limit
 - [ ] OOM handling and notifications
 
 ### 2.3 CPU Limits
 
-- [ ] `cpu.max` - CPU bandwidth limit (quota/period)
-- [ ] `cpu.weight` - CPU shares for fair scheduling
-- [ ] `cpuset.cpus` - CPU pinning
+- [x] `cpu.max` - CPU bandwidth limit (quota/period)
+- [x] `cpu.weight` - CPU shares for fair scheduling
+- [x] `cpuset.cpus` - CPU pinning
 
 ### 2.4 Process Limits
 
-- [ ] `pids.max` - maximum number of processes
-- [ ] Fork bomb protection
+- [x] `pids.max` - maximum number of processes
+- [x] Fork bomb protection
 
 ### 2.5 I/O Limits
 
-- [ ] `io.max` - I/O bandwidth limits
-- [ ] `io.weight` - I/O priority
+- [x] `io.max` - I/O bandwidth limits
+- [x] `io.weight` - I/O priority
 
 ---
 
@@ -107,15 +107,15 @@ The runtime currently implements:
 
 ### 3.1 Network Namespace Setup
 
-- [ ] veth pair creation
-- [ ] Bridge networking mode
-- [ ] Host networking mode (share host netns)
-- [ ] None networking mode (isolated, no connectivity)
+- [x] veth pair creation
+- [x] Bridge networking mode
+- [x] Host networking mode (share host netns)
+- [x] None networking mode (isolated, no connectivity)
 
 ### 3.2 IP Configuration
 
-- [ ] IP address assignment
-- [ ] Default gateway configuration
+- [x] IP address assignment
+- [x] Default gateway configuration
 - [ ] Custom routes support
 
 ### 3.3 Port Forwarding
@@ -126,9 +126,9 @@ The runtime currently implements:
 
 ### 3.4 DNS Configuration
 
-- [ ] `/etc/resolv.conf` generation
-- [ ] Custom DNS servers
-- [ ] `/etc/hosts` management
+- [x] `/etc/resolv.conf` generation
+- [x] Custom DNS servers
+- [x] `/etc/hosts` management
 
 ---
 
@@ -138,24 +138,24 @@ The runtime currently implements:
 
 ### 4.1 Container State Machine
 
-- [ ] States: Created → Running → Stopped
-- [ ] State persistence to disk
-- [ ] State querying API
+- [x] States: Created → Running → Stopped
+- [x] State persistence to disk
+- [x] State querying API
 
 ### 4.2 Signal Handling
 
-- [ ] Forward signals to container init process
-- [ ] Graceful shutdown with SIGTERM → SIGKILL escalation
-- [ ] Configurable stop timeout
+- [x] Forward signals to container init process
+- [x] Graceful shutdown with SIGTERM → SIGKILL escalation
+- [x] Configurable stop timeout
 
 ### 4.3 Lifecycle Hooks (OCI-style)
 
-- [ ] `prestart` - after container created, before user process
-- [ ] `createRuntime` - during create, before pivot_root
-- [ ] `createContainer` - during create, after pivot_root
-- [ ] `startContainer` - before starting user process
-- [ ] `poststart` - after user process started
-- [ ] `poststop` - after container stopped
+- [x] `prestart` - after container created, before user process
+- [x] `createRuntime` - during create, before pivot_root
+- [x] `createContainer` - during create, after pivot_root
+- [x] `startContainer` - before starting user process
+- [x] `poststart` - after user process started
+- [x] `poststop` - after container stopped
 
 ### 4.4 Exec into Running Container
 

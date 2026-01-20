@@ -23,6 +23,8 @@ type Container struct {
 	cfg        Config
 	stf        string
 	cmd        *exec.Cmd
+	cgroup     *Cgroup
+	network    *Network
 	stdinPipe  io.WriteCloser
 	stdoutPipe io.ReadCloser
 	stderrPipe io.ReadCloser
@@ -48,6 +50,19 @@ func New(statedir, id string, cfg Config) (*Container, error) {
 }
 
 func (c *Container) Run(p *Process) error {
+	// Create cgroup for resource limits if configured
+	if c.cfg.Resources != nil {
+		cg, err := NewCgroup("container-" + c.id)
+		if err != nil {
+			slog.Warn("failed to create cgroup, running without resource limits", "error", err)
+		} else {
+			c.cgroup = cg
+			if err := cg.Apply(c.cfg.Resources); err != nil {
+				slog.Warn("failed to apply resource limits", "error", err)
+			}
+		}
+	}
+
 	cmd := exec.Command("/proc/self/exe", "__child", c.stf)
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags:  c.cfg.Namespaces.CloneFlags(),
@@ -100,7 +115,28 @@ func (c *Container) Run(p *Process) error {
 	c.cmd = cmd
 
 	slog.Info("starting child", "cmd", cmd.Path, "args", cmd.Args)
-	return cmd.Start()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	// Add process to cgroup after start
+	if c.cgroup != nil {
+		if err := c.cgroup.AddProcess(cmd.Process.Pid); err != nil {
+			slog.Warn("failed to add process to cgroup", "error", err)
+		}
+	}
+
+	// Setup networking after process start (need PID for netns)
+	if c.cfg.Network != nil && c.cfg.Network.Mode == NetworkModeBridge {
+		net, err := SetupContainerNetwork(cmd.Process.Pid, *c.cfg.Network)
+		if err != nil {
+			slog.Warn("failed to setup network", "error", err)
+		} else {
+			c.network = net
+		}
+	}
+
+	return nil
 }
 
 func (c *Container) StdinPipe() (io.WriteCloser, error) {
@@ -126,6 +162,45 @@ func (c *Container) StderrPipe() (io.ReadCloser, error) {
 
 func (c *Container) Wait() error {
 	return c.cmd.Wait()
+}
+
+// Destroy cleans up container resources including cgroup and network
+func (c *Container) Destroy() error {
+	var errs []error
+
+	// Clean up network
+	if c.network != nil {
+		if err := c.network.Cleanup(); err != nil {
+			errs = append(errs, err)
+		}
+		c.network = nil
+	}
+
+	// Clean up cgroup
+	if c.cgroup != nil {
+		if err := c.cgroup.Delete(); err != nil {
+			errs = append(errs, err)
+		}
+		c.cgroup = nil
+	}
+
+	// Clean up state files
+	os.Remove(c.stf)
+	os.Remove(c.stf + ".process")
+	os.Remove(c.stf + ".log")
+
+	if len(errs) > 0 {
+		return errs[0]
+	}
+	return nil
+}
+
+// Stats returns current resource usage statistics
+func (c *Container) Stats() (*CgroupStats, error) {
+	if c.cgroup == nil {
+		return nil, nil
+	}
+	return c.cgroup.Stats()
 }
 
 func child() {

@@ -67,6 +67,18 @@ type Config struct {
 	SetupDev bool
 	// NoNewPrivileges sets the no_new_privs flag
 	NoNewPrivileges bool
+
+	// Resource limits (Phase 2)
+	// Resources configures cgroups v2 resource limits
+	Resources *Resources
+
+	// Networking (Phase 3)
+	// Network configures container networking
+	Network *NetworkConfig
+
+	// Lifecycle (Phase 4)
+	// Hooks configures lifecycle hooks
+	Hooks *Hooks
 }
 
 // DefaultConfig returns a Config with secure defaults
