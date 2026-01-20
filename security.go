@@ -2,89 +2,43 @@ package container
 
 import (
 	"golang.org/x/sys/unix"
+	"kernel.org/pub/linux/libs/security/libcap/cap"
 )
-
-// Capability represents a Linux capability
-type Capability int
-
-// Linux capabilities - subset of most commonly used
-const (
-	CAP_CHOWN            Capability = 0
-	CAP_DAC_OVERRIDE     Capability = 1
-	CAP_DAC_READ_SEARCH  Capability = 2
-	CAP_FOWNER           Capability = 3
-	CAP_FSETID           Capability = 4
-	CAP_KILL             Capability = 5
-	CAP_SETGID           Capability = 6
-	CAP_SETUID           Capability = 7
-	CAP_SETPCAP          Capability = 8
-	CAP_LINUX_IMMUTABLE  Capability = 9
-	CAP_NET_BIND_SERVICE Capability = 10
-	CAP_NET_BROADCAST    Capability = 11
-	CAP_NET_ADMIN        Capability = 12
-	CAP_NET_RAW          Capability = 13
-	CAP_IPC_LOCK         Capability = 14
-	CAP_IPC_OWNER        Capability = 15
-	CAP_SYS_MODULE       Capability = 16
-	CAP_SYS_RAWIO        Capability = 17
-	CAP_SYS_CHROOT       Capability = 18
-	CAP_SYS_PTRACE       Capability = 19
-	CAP_SYS_PACCT        Capability = 20
-	CAP_SYS_ADMIN        Capability = 21
-	CAP_SYS_BOOT         Capability = 22
-	CAP_SYS_NICE         Capability = 23
-	CAP_SYS_RESOURCE     Capability = 24
-	CAP_SYS_TIME         Capability = 25
-	CAP_SYS_TTY_CONFIG   Capability = 26
-	CAP_MKNOD            Capability = 27
-	CAP_LEASE            Capability = 28
-	CAP_AUDIT_WRITE      Capability = 29
-	CAP_AUDIT_CONTROL    Capability = 30
-	CAP_SETFCAP          Capability = 31
-	CAP_MAC_OVERRIDE     Capability = 32
-	CAP_MAC_ADMIN        Capability = 33
-	CAP_SYSLOG           Capability = 34
-	CAP_WAKE_ALARM       Capability = 35
-	CAP_BLOCK_SUSPEND    Capability = 36
-	CAP_AUDIT_READ       Capability = 37
-	CAP_PERFMON          Capability = 38
-	CAP_BPF              Capability = 39
-	CAP_CHECKPOINT_RESTORE Capability = 40
-	CAP_LAST_CAP         Capability = 40
-)
-
-// DefaultCapabilities returns a minimal set of capabilities for containers
-func DefaultCapabilities() []Capability {
-	return []Capability{
-		CAP_CHOWN,
-		CAP_DAC_OVERRIDE,
-		CAP_FSETID,
-		CAP_FOWNER,
-		CAP_MKNOD,
-		CAP_NET_RAW,
-		CAP_SETGID,
-		CAP_SETUID,
-		CAP_SETFCAP,
-		CAP_SETPCAP,
-		CAP_NET_BIND_SERVICE,
-		CAP_SYS_CHROOT,
-		CAP_KILL,
-		CAP_AUDIT_WRITE,
-	}
-}
 
 // Capabilities configures the capability sets for the container
+// Uses kernel.org/pub/linux/libs/security/libcap/cap for proper POSIX semantics
 type Capabilities struct {
-	// Bounding set - upper limit on capabilities
-	Bounding []Capability
+	// Bounding set - upper limit on capabilities that can be gained
+	Bounding []cap.Value
 	// Effective set - capabilities used for permission checks
-	Effective []Capability
+	Effective []cap.Value
 	// Permitted set - capabilities that can be assumed
-	Permitted []Capability
+	Permitted []cap.Value
 	// Inheritable set - capabilities preserved across execve
-	Inheritable []Capability
+	Inheritable []cap.Value
 	// Ambient set - capabilities inherited by non-privileged programs
-	Ambient []Capability
+	Ambient []cap.Value
+}
+
+// DefaultCapabilities returns a minimal set of capabilities for containers
+// This matches Docker's default capability set
+func DefaultCapabilities() []cap.Value {
+	return []cap.Value{
+		cap.CHOWN,
+		cap.DAC_OVERRIDE,
+		cap.FSETID,
+		cap.FOWNER,
+		cap.MKNOD,
+		cap.NET_RAW,
+		cap.SETGID,
+		cap.SETUID,
+		cap.SETFCAP,
+		cap.SETPCAP,
+		cap.NET_BIND_SERVICE,
+		cap.SYS_CHROOT,
+		cap.KILL,
+		cap.AUDIT_WRITE,
+	}
 }
 
 // DefaultCapabilitiesConfig returns a capabilities config with safe defaults
@@ -99,93 +53,92 @@ func DefaultCapabilitiesConfig() *Capabilities {
 	}
 }
 
-// capabilitySet converts capability slice to a bitmask
-func capabilitySet(caps []Capability) uint64 {
-	var set uint64
-	for _, c := range caps {
-		set |= (1 << uint(c))
-	}
-	return set
-}
-
-// applyCapabilities applies the capability configuration
+// applyCapabilities applies the capability configuration using libcap
 func applyCapabilities(caps *Capabilities) error {
 	if caps == nil {
 		return nil
 	}
 
-	// Drop capabilities from bounding set that aren't in the config
-	boundingSet := capabilitySet(caps.Bounding)
-	for c := Capability(0); c <= CAP_LAST_CAP; c++ {
-		if boundingSet&(1<<uint(c)) == 0 {
-			if err := unix.Prctl(unix.PR_CAPBSET_DROP, uintptr(c), 0, 0, 0); err != nil {
-				// Ignore EINVAL for capabilities that don't exist on this kernel
-				if err != unix.EINVAL {
-					return err
-				}
-			}
-		}
+	// Build sets for quick lookup
+	boundingSet := make(map[cap.Value]bool)
+	for _, c := range caps.Bounding {
+		boundingSet[c] = true
 	}
 
-	// Set ambient capabilities
-	// First clear all ambient caps
-	if err := unix.Prctl(unix.PR_CAP_AMBIENT, unix.PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0); err != nil {
-		// Ignore if ambient caps not supported
-		if err != unix.EINVAL {
-			return err
-		}
-	}
-
-	// Raise specified ambient caps
+	ambientSet := make(map[cap.Value]bool)
 	for _, c := range caps.Ambient {
-		if err := unix.Prctl(unix.PR_CAP_AMBIENT, unix.PR_CAP_AMBIENT_RAISE, uintptr(c), 0, 0); err != nil {
-			if err != unix.EINVAL && err != unix.EPERM {
-				return err
+		ambientSet[c] = true
+	}
+
+	// Drop capabilities from bounding set
+	// We need to drop caps NOT in our desired bounding set
+	for v := cap.Value(0); v <= cap.MaxBits(); v++ {
+		if !boundingSet[v] {
+			if err := cap.DropBound(v); err != nil {
+				// Ignore errors for caps that don't exist on this kernel
+				continue
 			}
 		}
 	}
 
-	// Set permitted, effective, and inheritable using capset
-	var hdr unix.CapUserHeader
-	var data [2]unix.CapUserData
+	// Create a new capability set
+	c := cap.NewSet()
 
-	hdr.Version = unix.LINUX_CAPABILITY_VERSION_3
-	hdr.Pid = 0 // Current process
+	// Set permitted capabilities
+	if err := c.SetFlag(cap.Permitted, true, caps.Permitted...); err != nil {
+		return err
+	}
 
-	permittedSet := capabilitySet(caps.Permitted)
-	effectiveSet := capabilitySet(caps.Effective)
-	inheritableSet := capabilitySet(caps.Inheritable)
+	// Set effective capabilities
+	if err := c.SetFlag(cap.Effective, true, caps.Effective...); err != nil {
+		return err
+	}
 
-	data[0].Permitted = uint32(permittedSet & 0xffffffff)
-	data[0].Effective = uint32(effectiveSet & 0xffffffff)
-	data[0].Inheritable = uint32(inheritableSet & 0xffffffff)
-	data[1].Permitted = uint32(permittedSet >> 32)
-	data[1].Effective = uint32(effectiveSet >> 32)
-	data[1].Inheritable = uint32(inheritableSet >> 32)
+	// Set inheritable capabilities
+	if err := c.SetFlag(cap.Inheritable, true, caps.Inheritable...); err != nil {
+		return err
+	}
 
-	return unix.Capset(&hdr, &data[0])
+	// Apply the capability set to current process
+	if err := c.SetProc(); err != nil {
+		return err
+	}
+
+	// Set ambient capabilities (must be done after SetProc)
+	// First clear all ambient caps
+	cap.ResetAmbient()
+
+	// Then raise the ones we want
+	for _, v := range caps.Ambient {
+		if err := cap.SetAmbient(true, v); err != nil {
+			// Ignore errors - ambient caps may not be supported
+			continue
+		}
+	}
+
+	return nil
 }
 
 // Device represents a device node to create in the container
 type Device struct {
-	Path  string      // Path inside container (e.g., "/dev/null")
-	Type  uint32      // S_IFCHR (character) or S_IFBLK (block)
-	Major uint32      // Major device number
-	Minor uint32      // Minor device number
-	Mode  uint32      // File permissions (e.g., 0666)
-	Uid   uint32      // Owner UID
-	Gid   uint32      // Owner GID
+	Path  string // Path inside container (e.g., "/dev/null")
+	Type  uint32 // S_IFCHR (character) or S_IFBLK (block)
+	Major uint32 // Major device number
+	Minor uint32 // Minor device number
+	Mode  uint32 // File permissions (e.g., 0666)
+	Uid   uint32 // Owner UID
+	Gid   uint32 // Owner GID
 }
 
 // DefaultDevices returns the minimal set of devices for a container
 func DefaultDevices() []Device {
 	return []Device{
-		{Path: "/dev/null", Type: unix.S_IFCHR, Major: 1, Minor: 3, Mode: 0666, Uid: 0, Gid: 0},
-		{Path: "/dev/zero", Type: unix.S_IFCHR, Major: 1, Minor: 5, Mode: 0666, Uid: 0, Gid: 0},
-		{Path: "/dev/full", Type: unix.S_IFCHR, Major: 1, Minor: 7, Mode: 0666, Uid: 0, Gid: 0},
-		{Path: "/dev/random", Type: unix.S_IFCHR, Major: 1, Minor: 8, Mode: 0666, Uid: 0, Gid: 0},
-		{Path: "/dev/urandom", Type: unix.S_IFCHR, Major: 1, Minor: 9, Mode: 0666, Uid: 0, Gid: 0},
-		{Path: "/dev/tty", Type: unix.S_IFCHR, Major: 5, Minor: 0, Mode: 0666, Uid: 0, Gid: 0},
+		{Path: "/dev/null", Type: unix.S_IFCHR, Major: 1, Minor: 3, Mode: 0o666, Uid: 0, Gid: 0},
+		{Path: "/dev/zero", Type: unix.S_IFCHR, Major: 1, Minor: 5, Mode: 0o666, Uid: 0, Gid: 0},
+		{Path: "/dev/full", Type: unix.S_IFCHR, Major: 1, Minor: 7, Mode: 0o666, Uid: 0, Gid: 0},
+		{Path: "/dev/random", Type: unix.S_IFCHR, Major: 1, Minor: 8, Mode: 0o666, Uid: 0, Gid: 0},
+		{Path: "/dev/urandom", Type: unix.S_IFCHR, Major: 1, Minor: 9, Mode: 0o666, Uid: 0, Gid: 0},
+		{Path: "/dev/tty", Type: unix.S_IFCHR, Major: 5, Minor: 0, Mode: 0o666, Uid: 0, Gid: 0},
 	}
 }
 

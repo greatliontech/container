@@ -120,9 +120,9 @@ The runtime currently implements:
 
 ### 3.3 Port Forwarding
 
-- [ ] Port mapping (host:container)
-- [ ] Support TCP and UDP
-- [ ] iptables/nftables rules management
+- [x] Port mapping (host:container)
+- [x] Support TCP and UDP
+- [x] iptables rules management
 
 ### 3.4 DNS Configuration
 
@@ -159,9 +159,13 @@ The runtime currently implements:
 
 ### 4.4 Exec into Running Container
 
-- [ ] Join existing namespaces via `setns()`
-- [ ] Support for `nsenter` equivalent functionality
-- [ ] Attach to running container's stdio
+- [x] Join existing namespaces via `setns()` (non-user namespaces)
+- [x] Support for `nsenter` equivalent functionality
+- [x] Attach to running container's stdio
+
+**Note**: Due to Go's multithreading model, joining user namespaces from Go is unsafe. The implementation provides two approaches:
+1. `ExecWithNsenter()` - uses the `nsenter(1)` utility (recommended, handles all namespaces)
+2. `ExecNoUserNs()` - pure Go, enters all namespaces except user namespace
 
 ---
 
@@ -239,7 +243,9 @@ Using `github.com/elastic/go-seccomp-bpf`:
 
 ### Capabilities Without CGO
 
-Capabilities can be managed via:
-1. `prctl()` syscalls with `PR_CAPBSET_DROP`, `PR_CAP_AMBIENT`
-2. `capset()` syscall for setting capability sets
-3. All available via `golang.org/x/sys/unix`
+Using `kernel.org/pub/linux/libs/security/libcap/cap`:
+- Official libcap bindings from kernel.org
+- Pure Go with `CGO_ENABLED=0`
+- Proper POSIX semantics (all threads stay in sync)
+- Full IAB (Inheritable, Ambient, Bounding) support
+- BSD/GPL dual licensed

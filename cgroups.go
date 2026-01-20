@@ -121,7 +121,7 @@ func getEnabledControllers(cgroupPath string) ([]string, error) {
 func enableControllers(cgroupPath string, controllers []string) error {
 	subtreeControl := filepath.Join(cgroupPath, "cgroup.subtree_control")
 	for _, c := range controllers {
-		if err := os.WriteFile(subtreeControl, []byte("+"+c), 0644); err != nil {
+		if err := os.WriteFile(subtreeControl, []byte("+"+c), 0o644); err != nil {
 			// Ignore errors for controllers that are already enabled or not available
 			continue
 		}
@@ -138,7 +138,7 @@ func NewCgroup(name string) (*Cgroup, error) {
 	cgroupPath := filepath.Join(cgroupV2Root, name)
 
 	// Create the cgroup directory
-	if err := os.MkdirAll(cgroupPath, 0755); err != nil {
+	if err := os.MkdirAll(cgroupPath, 0o755); err != nil {
 		return nil, fmt.Errorf("create cgroup: %w", err)
 	}
 
@@ -178,7 +178,7 @@ func (c *Cgroup) Path() string {
 
 // AddProcess adds a process to the cgroup
 func (c *Cgroup) AddProcess(pid int) error {
-	return os.WriteFile(filepath.Join(c.path, "cgroup.procs"), []byte(strconv.Itoa(pid)), 0644)
+	return os.WriteFile(filepath.Join(c.path, "cgroup.procs"), []byte(strconv.Itoa(pid)), 0o644)
 }
 
 // Apply applies the resource limits to the cgroup
@@ -332,7 +332,7 @@ func (c *Cgroup) applyIO(io *IOResources) error {
 }
 
 func (c *Cgroup) writeFile(name, value string) error {
-	return os.WriteFile(filepath.Join(c.path, name), []byte(value), 0644)
+	return os.WriteFile(filepath.Join(c.path, name), []byte(value), 0o644)
 }
 
 // Delete removes the cgroup
@@ -347,7 +347,7 @@ func (c *Cgroup) Delete() error {
 	if len(procs) > 0 {
 		parentProcs := filepath.Join(filepath.Dir(c.path), "cgroup.procs")
 		for _, pid := range procs {
-			os.WriteFile(parentProcs, []byte(strconv.Itoa(pid)), 0644)
+			os.WriteFile(parentProcs, []byte(strconv.Itoa(pid)), 0o644)
 		}
 	}
 
@@ -374,7 +374,7 @@ func (c *Cgroup) Processes() ([]int, error) {
 	return pids, scanner.Err()
 }
 
-// Stat returns current resource usage statistics
+// CgroupStats returns current resource usage statistics
 type CgroupStats struct {
 	Memory *MemoryStats
 	CPU    *CPUStats

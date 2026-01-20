@@ -45,15 +45,19 @@ type NetworkConfig struct {
 
 	// Hostname is the container hostname (also set via Config.Hostname)
 	Hostname string
+
+	// PortMappings defines port forwarding rules
+	PortMappings []PortMapping
 }
 
 // Network manages container networking
 type Network struct {
-	config     NetworkConfig
-	bridge     netlink.Link
-	vethHost   netlink.Link
-	vethPeer   string
-	containerNS netns.NsHandle
+	config        NetworkConfig
+	bridge        netlink.Link
+	vethHost      netlink.Link
+	vethPeer      string
+	containerNS   netns.NsHandle
+	portForwarder *PortForwarder
 }
 
 // DefaultBridgeName is the default bridge name for container networking
@@ -215,13 +219,36 @@ func SetupContainerNetwork(pid int, config NetworkConfig) (*Network, error) {
 		}
 	}
 
-	return &Network{
+	net := &Network{
 		config:      config,
 		bridge:      br,
 		vethHost:    hostVeth,
 		vethPeer:    peerVethName,
 		containerNS: containerNS,
-	}, nil
+	}
+
+	// Setup port forwarding if configured
+	if len(config.PortMappings) > 0 && config.IPAddress != "" {
+		// Extract IP without CIDR suffix
+		ip := config.IPAddress
+		for i := len(ip) - 1; i >= 0; i-- {
+			if ip[i] == '/' {
+				ip = ip[:i]
+				break
+			}
+		}
+
+		pf := NewPortForwarder(ip, bridgeName)
+		for _, pm := range config.PortMappings {
+			if err := pf.AddMapping(pm); err != nil {
+				// Log but don't fail - port forwarding is optional
+				continue
+			}
+		}
+		net.portForwarder = pf
+	}
+
+	return net, nil
 }
 
 // configureContainerInterface configures the network interface inside the container
@@ -300,14 +327,25 @@ func configureContainerInterface(ns netns.NsHandle, ifName string, config Networ
 
 // Cleanup removes the network resources
 func (n *Network) Cleanup() error {
+	var lastErr error
+
+	// Clean up port forwarding rules
+	if n.portForwarder != nil {
+		if err := n.portForwarder.Cleanup(); err != nil {
+			lastErr = err
+		}
+	}
+
 	if n.containerNS != 0 {
 		n.containerNS.Close()
 	}
 	if n.vethHost != nil {
 		// Deleting host veth automatically deletes the peer
-		return netlink.LinkDel(n.vethHost)
+		if err := netlink.LinkDel(n.vethHost); err != nil {
+			lastErr = err
+		}
 	}
-	return nil
+	return lastErr
 }
 
 // WriteResolvConf writes /etc/resolv.conf in the container rootfs

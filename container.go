@@ -13,8 +13,13 @@ import (
 )
 
 func init() {
-	if len(os.Args) > 1 && os.Args[1] == "__child" {
-		child()
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "__child":
+			child()
+		case "__exec":
+			nsenterExec()
+		}
 	}
 }
 
