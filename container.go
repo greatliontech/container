@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
 func init() {
@@ -169,6 +171,13 @@ func child() {
 		os.Exit(1)
 	}
 
+	// Make mount namespace private to prevent propagation leaks
+	if err := unix.Mount("", "/", "", unix.MS_PRIVATE|unix.MS_REC, ""); err != nil {
+		slog.Error("mount private:", "error", err)
+		os.Exit(1)
+	}
+
+	// Execute user-specified mounts
 	for _, m := range cfg.Mounts {
 		if err := syscall.Mount(m.Source, m.Target, m.Type, m.Flags, m.Data); err != nil {
 			slog.Error("mount:", "error", err, "source", m.Source, "target", m.Target, "type", m.Type, "flags", m.Flags, "data", m.Data)
@@ -183,13 +192,30 @@ func child() {
 		}
 	}
 
+	// Setup root filesystem
 	if cfg.Root != "" {
-		if err := syscall.Chroot(cfg.Root); err != nil {
-			slog.Error("chroot:", "error", err)
-			os.Exit(1)
+		if cfg.UsePivotRoot {
+			if err := pivotRoot(cfg.Root); err != nil {
+				slog.Error("pivot_root:", "error", err)
+				os.Exit(1)
+			}
+		} else {
+			// Fallback to chroot
+			if err := syscall.Chroot(cfg.Root); err != nil {
+				slog.Error("chroot:", "error", err)
+				os.Exit(1)
+			}
+			if err := syscall.Chdir("/"); err != nil {
+				slog.Error("chdir:", "error", err)
+				os.Exit(1)
+			}
 		}
-		if err := syscall.Chdir("/"); err != nil {
-			slog.Error("chdir:", "error", err)
+	}
+
+	// Setup /dev with minimal devices
+	if cfg.SetupDev {
+		if err := setupDev(cfg.Devices); err != nil {
+			slog.Error("setup dev:", "error", err)
 			os.Exit(1)
 		}
 	}
@@ -197,6 +223,30 @@ func child() {
 	if p.WorkDir != "" {
 		if err := syscall.Chdir(p.WorkDir); err != nil {
 			slog.Error("chdir:", "error", err)
+			os.Exit(1)
+		}
+	}
+
+	// Apply capabilities first (before seccomp, as seccomp may block cap changes)
+	if cfg.Capabilities != nil {
+		if err := applyCapabilities(cfg.Capabilities); err != nil {
+			slog.Error("apply capabilities:", "error", err)
+			os.Exit(1)
+		}
+	}
+
+	// Set no_new_privs if not using seccomp (seccomp library sets it automatically)
+	if cfg.NoNewPrivileges && cfg.Seccomp == nil {
+		if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
+			slog.Error("set no_new_privs:", "error", err)
+			os.Exit(1)
+		}
+	}
+
+	// Apply seccomp filter (sets NO_NEW_PRIVS automatically)
+	if cfg.Seccomp != nil {
+		if err := applySeccomp(cfg.Seccomp); err != nil {
+			slog.Error("apply seccomp:", "error", err)
 			os.Exit(1)
 		}
 	}
@@ -213,4 +263,68 @@ func child() {
 		slog.Error("exec:", "error", err)
 		os.Exit(1)
 	}
+}
+
+// pivotRoot changes the root filesystem using pivot_root syscall
+// This is more secure than chroot as it properly isolates the filesystem
+func pivotRoot(newRoot string) error {
+	// pivot_root requires the new root to be a mount point
+	// Bind mount the new root to itself to ensure it's a mount point
+	if err := unix.Mount(newRoot, newRoot, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+		return err
+	}
+
+	// Create directory for old root
+	oldRoot := filepath.Join(newRoot, ".pivot_root")
+	if err := os.MkdirAll(oldRoot, 0700); err != nil {
+		return err
+	}
+
+	// Perform the pivot_root
+	if err := unix.PivotRoot(newRoot, oldRoot); err != nil {
+		return err
+	}
+
+	// Change to new root
+	if err := unix.Chdir("/"); err != nil {
+		return err
+	}
+
+	// Unmount old root
+	oldRoot = "/.pivot_root"
+	if err := unix.Unmount(oldRoot, unix.MNT_DETACH); err != nil {
+		return err
+	}
+
+	// Remove old root mount point
+	return os.RemoveAll(oldRoot)
+}
+
+// setupDev creates a minimal /dev filesystem
+func setupDev(devices []Device) error {
+	// Mount tmpfs on /dev
+	if err := unix.Mount("tmpfs", "/dev", "tmpfs", unix.MS_NOSUID|unix.MS_STRICTATIME, "mode=755,size=65536k"); err != nil {
+		return err
+	}
+
+	// Create pts directory for pseudo-terminals
+	if err := os.MkdirAll("/dev/pts", 0755); err != nil {
+		return err
+	}
+
+	// Create shm directory for shared memory
+	if err := os.MkdirAll("/dev/shm", 1777); err != nil {
+		return err
+	}
+
+	// Create device nodes
+	if devices == nil {
+		devices = DefaultDevices()
+	}
+	if err := createDevices(devices); err != nil {
+		return err
+	}
+
+	// Create standard symlinks
+	return createDevSymlinks()
 }

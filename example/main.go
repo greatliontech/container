@@ -33,50 +33,50 @@ func main() {
 		os.Exit(1)
 	}
 
-	cfg := container.Config{
-		Root:     trgtroot,
-		Hostname: "test",
-		Namespaces: container.Namespaces{
-			NewIPC:  true,
-			NewMnt:  true,
-			NewNet:  true,
-			NewPID:  true,
-			NewUTS:  true,
-			NewUser: true,
+	// Start with secure defaults
+	cfg := container.DefaultConfig()
+	cfg.Root = trgtroot
+	cfg.Hostname = "test"
+	cfg.Mounts = []container.Mount{
+		{
+			Source: im.MountPoint(),
+			Target: trgtroot,
+			Type:   "auto",
+			Flags:  container.MountFlags.Bind,
 		},
-		Mounts: []container.Mount{
-			{
-				Source: im.MountPoint(),
-				Target: trgtroot,
-				Type:   "auto",
-				Flags:  syscall.MS_BIND | syscall.MS_RDONLY,
-			},
-			{
-				Source: "none",
-				Target: trgtroot + "/proc",
-				Type:   "proc",
-			},
-			{
-				Source: "none",
-				Target: trgtroot + "/sys",
-				Type:   "sysfs",
-			},
+		{
+			Source: "none",
+			Target: trgtroot + "/proc",
+			Type:   "proc",
+			Flags:  container.MountFlags.Proc,
 		},
-		UidMappings: []syscall.SysProcIDMap{
-			{
-				ContainerID: 0,
-				HostID:      syscall.Getuid(),
-				Size:        1,
-			},
-		},
-		GidMappings: []syscall.SysProcIDMap{
-			{
-				ContainerID: 0,
-				HostID:      syscall.Getgid(),
-				Size:        1,
-			},
+		{
+			Source: "none",
+			Target: trgtroot + "/sys",
+			Type:   "sysfs",
+			Flags:  container.MountFlags.Sysfs,
 		},
 	}
+	cfg.UidMappings = []syscall.SysProcIDMap{
+		{
+			ContainerID: 0,
+			HostID:      syscall.Getuid(),
+			Size:        1,
+		},
+	}
+	cfg.GidMappings = []syscall.SysProcIDMap{
+		{
+			ContainerID: 0,
+			HostID:      syscall.Getgid(),
+			Size:        1,
+		},
+	}
+	// Security features enabled by DefaultConfig():
+	// - UsePivotRoot: true (uses pivot_root instead of chroot)
+	// - Capabilities: minimal set for containers
+	// - Seccomp: blocks dangerous syscalls
+	// - SetupDev: true (creates /dev with minimal devices)
+	// - NoNewPrivileges: true
 
 	cont, err := container.New("/tmp/contstatetest", contID, cfg)
 	if err != nil {
