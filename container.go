@@ -2,6 +2,7 @@ package container
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -124,6 +125,11 @@ func (c *Container) Run(p *Process) error {
 		return err
 	}
 
+	// Write PID file for exec
+	if err := os.WriteFile(c.stf+".pid", []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0600); err != nil {
+		slog.Warn("failed to write pid file", "error", err)
+	}
+
 	// Add process to cgroup after start
 	if c.cgroup != nil {
 		if err := c.cgroup.AddProcess(cmd.Process.Pid); err != nil {
@@ -192,6 +198,7 @@ func (c *Container) Destroy() error {
 	// Clean up state files
 	os.Remove(c.stf)
 	os.Remove(c.stf + ".process")
+	os.Remove(c.stf + ".pid")
 	os.Remove(c.stf + ".log")
 
 	if len(errs) > 0 {

@@ -23,6 +23,8 @@ type ExecConfig struct {
 	Env []string
 	// WorkDir is the working directory
 	WorkDir string
+	// Root is the root filesystem path (for chroot-based containers)
+	Root string
 	// Stdin is the stdin reader
 	Stdin io.Reader
 	// Stdout is the stdout writer
@@ -37,6 +39,11 @@ type ExecConfig struct {
 func (c *Container) Exec(config ExecConfig) (*exec.Cmd, error) {
 	if c.cmd == nil || c.cmd.Process == nil {
 		return nil, fmt.Errorf("container not running")
+	}
+
+	// Only set root for chroot mode - pivot_root changes the mount namespace root
+	if config.Root == "" && !c.cfg.UsePivotRoot {
+		config.Root = c.cfg.Root
 	}
 
 	pid := c.cmd.Process.Pid
@@ -63,6 +70,16 @@ func ExecWithNsenter(pid int, config ExecConfig) (*exec.Cmd, error) {
 	selfUserNs, err2 := os.Readlink("/proc/self/ns/user")
 	if err1 == nil && err2 == nil && targetUserNs != selfUserNs {
 		args = append(args, "--user")
+	}
+
+	// Add root filesystem if specified (needed for chroot-based containers)
+	if config.Root != "" {
+		args = append(args, fmt.Sprintf("--root=%s", config.Root))
+	}
+
+	// Add working directory if specified
+	if config.WorkDir != "" {
+		args = append(args, fmt.Sprintf("--wd=%s", config.WorkDir))
 	}
 
 	// Add the command to execute
