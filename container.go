@@ -2,12 +2,14 @@ package container
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -279,6 +281,16 @@ func child() {
 		}
 	}
 
+	// Setup /dev with minimal devices — must happen before pivot_root so
+	// we can still access host device nodes for bind-mount fallback (used
+	// in user namespaces where mknod is forbidden).
+	if cfg.SetupDev {
+		if err := setupDev(cfg.Root, cfg.Devices); err != nil {
+			slog.Error("setup dev:", "error", err)
+			os.Exit(1)
+		}
+	}
+
 	// Setup root filesystem
 	if cfg.Root != "" {
 		if cfg.UsePivotRoot {
@@ -296,14 +308,6 @@ func child() {
 				slog.Error("chdir:", "error", err)
 				os.Exit(1)
 			}
-		}
-	}
-
-	// Setup /dev with minimal devices
-	if cfg.SetupDev {
-		if err := setupDev(cfg.Devices); err != nil {
-			slog.Error("setup dev:", "error", err)
-			os.Exit(1)
 		}
 	}
 
@@ -346,7 +350,19 @@ func child() {
 		env = append(env, p.Env...)
 	}
 
-	if err := syscall.Exec(p.Cmd, append([]string{p.Cmd}, p.Args...), env); err != nil {
+	// Resolve the command path via PATH lookup if it's not absolute.
+	// syscall.Exec does not do PATH resolution — it requires an absolute path.
+	cmd := p.Cmd
+	if !filepath.IsAbs(cmd) {
+		resolved, err := lookPath(cmd, env)
+		if err != nil {
+			slog.Error("lookpath:", "error", err, "cmd", cmd)
+			os.Exit(1)
+		}
+		cmd = resolved
+	}
+
+	if err := syscall.Exec(cmd, append([]string{p.Cmd}, p.Args...), env); err != nil {
 		slog.Error("exec:", "error", err)
 		os.Exit(1)
 	}
@@ -383,24 +399,31 @@ func pivotRoot(newRoot string) error {
 		return err
 	}
 
-	// Remove old root mount point
-	return os.RemoveAll(oldRoot)
+	// Remove old root mount point (best-effort — may fail on read-only rootfs
+	// such as FUSE-mounted OCI images, which is harmless after unmount).
+	os.RemoveAll(oldRoot)
+	return nil
 }
 
-// setupDev creates a minimal /dev filesystem
-func setupDev(devices []Device) error {
-	// Mount tmpfs on /dev
-	if err := unix.Mount("tmpfs", "/dev", "tmpfs", unix.MS_NOSUID|unix.MS_STRICTATIME, "mode=755,size=65536k"); err != nil {
-		return err
+// setupDev creates a minimal /dev filesystem inside the container rootfs.
+// It is called before pivot_root so that host device nodes are still accessible
+// for the bind-mount fallback (used in user namespaces where mknod is forbidden).
+// This follows the same approach as runc/libcontainer.
+func setupDev(root string, devices []Device) error {
+	devDir := filepath.Join(root, "dev")
+
+	// Mount tmpfs on /dev to get a writable filesystem.
+	if err := unix.Mount("tmpfs", devDir, "tmpfs", unix.MS_NOSUID|unix.MS_STRICTATIME, "mode=755,size=65536k"); err != nil {
+		return fmt.Errorf("mount tmpfs on /dev: %w", err)
 	}
 
 	// Create pts directory for pseudo-terminals
-	if err := os.MkdirAll("/dev/pts", 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(devDir, "pts"), 0755); err != nil {
 		return err
 	}
 
 	// Create shm directory for shared memory
-	if err := os.MkdirAll("/dev/shm", 1777); err != nil {
+	if err := os.MkdirAll(filepath.Join(devDir, "shm"), 1777); err != nil {
 		return err
 	}
 
@@ -408,10 +431,36 @@ func setupDev(devices []Device) error {
 	if devices == nil {
 		devices = DefaultDevices()
 	}
-	if err := createDevices(devices); err != nil {
+	if err := createDevices(root, devices); err != nil {
 		return err
 	}
 
-	// Create standard symlinks
-	return createDevSymlinks()
+	// Create standard symlinks (fd, stdin, stdout, stderr)
+	return createDevSymlinks(devDir)
+}
+
+// lookPath resolves a command name to an absolute path using the PATH
+// variable from the given environment slice. This is used in the child
+// process where os.Getenv("PATH") doesn't reflect the container's env.
+func lookPath(cmd string, env []string) (string, error) {
+	var path string
+	for _, e := range env {
+		if strings.HasPrefix(e, "PATH=") {
+			path = e[5:]
+			break
+		}
+	}
+	if path == "" {
+		return "", errors.New("PATH not set")
+	}
+	for _, dir := range strings.Split(path, ":") {
+		if dir == "" {
+			dir = "."
+		}
+		candidate := filepath.Join(dir, cmd)
+		if err := unix.Access(candidate, unix.X_OK); err == nil {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("command %q not found in PATH", cmd)
 }

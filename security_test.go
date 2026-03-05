@@ -159,11 +159,11 @@ func TestMkdev(t *testing.T) {
 		major, minor uint32
 		want         uint64
 	}{
-		{major: 1, minor: 3, want: (1 << 8) | 3},      // /dev/null
-		{major: 1, minor: 5, want: (1 << 8) | 5},      // /dev/zero
-		{major: 1, minor: 8, want: (1 << 8) | 8},      // /dev/random
-		{major: 5, minor: 0, want: (5 << 8) | 0},      // /dev/tty
-		{major: 0, minor: 0, want: 0},                 // edge case
+		{major: 1, minor: 3, want: (1 << 8) | 3}, // /dev/null
+		{major: 1, minor: 5, want: (1 << 8) | 5}, // /dev/zero
+		{major: 1, minor: 8, want: (1 << 8) | 8}, // /dev/random
+		{major: 5, minor: 0, want: (5 << 8) | 0}, // /dev/tty
+		{major: 0, minor: 0, want: 0},            // edge case
 		{major: 255, minor: 255, want: (255 << 8) | 255},
 	}
 
@@ -240,35 +240,42 @@ func TestCreateDevices(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	// Create a subset of devices in temp directory
+	// Device paths are relative to root (like /dev/null), and createDevices
+	// joins them with the root parameter.
 	devices := []Device{
-		{Path: filepath.Join(tmpDir, "null"), Type: unix.S_IFCHR, Major: 1, Minor: 3, Mode: 0o666, Uid: 0, Gid: 0},
-		{Path: filepath.Join(tmpDir, "zero"), Type: unix.S_IFCHR, Major: 1, Minor: 5, Mode: 0o666, Uid: 0, Gid: 0},
+		{Path: "/dev/null", Type: unix.S_IFCHR, Major: 1, Minor: 3, Mode: 0o666, Uid: 0, Gid: 0},
+		{Path: "/dev/zero", Type: unix.S_IFCHR, Major: 1, Minor: 5, Mode: 0o666, Uid: 0, Gid: 0},
 	}
 
-	if err := createDevices(devices); err != nil {
+	// Create the dev directory under tmpDir since createDeviceNode joins root + dev.Path
+	if err := os.MkdirAll(filepath.Join(tmpDir, "dev"), 0o755); err != nil {
+		t.Fatalf("failed to create dev dir: %v", err)
+	}
+
+	if err := createDevices(tmpDir, devices); err != nil {
 		t.Fatalf("createDevices failed: %v", err)
 	}
 
 	// Verify devices were created correctly
 	for _, dev := range devices {
-		info, err := os.Stat(dev.Path)
+		fullPath := filepath.Join(tmpDir, dev.Path)
+		info, err := os.Stat(fullPath)
 		if err != nil {
-			t.Errorf("device %s not created: %v", dev.Path, err)
+			t.Errorf("device %s not created: %v", fullPath, err)
 			continue
 		}
 
 		// Check it's a character device
 		mode := info.Mode()
 		if mode&os.ModeDevice == 0 || mode&os.ModeCharDevice == 0 {
-			t.Errorf("%s is not a character device", dev.Path)
+			t.Errorf("%s is not a character device", fullPath)
 		}
 
 		// Check permissions
 		perm := mode.Perm()
 		expectedPerm := os.FileMode(dev.Mode)
 		if perm != expectedPerm {
-			t.Errorf("%s permissions = %#o, want %#o", dev.Path, perm, expectedPerm)
+			t.Errorf("%s permissions = %#o, want %#o", fullPath, perm, expectedPerm)
 		}
 	}
 

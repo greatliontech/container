@@ -1,6 +1,7 @@
 package container
 
 import (
+	"os"
 	"syscall"
 	"testing"
 
@@ -187,6 +188,24 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if !cfg.NoNewPrivileges {
 		t.Error("DefaultConfig should enable no_new_privs")
+	}
+
+	// Verify UID/GID mappings are set for user namespace
+	if len(cfg.UidMappings) != 1 {
+		t.Errorf("DefaultConfig should set 1 UID mapping, got %d", len(cfg.UidMappings))
+	} else {
+		m := cfg.UidMappings[0]
+		if m.ContainerID != 0 || m.HostID != os.Getuid() || m.Size != 1 {
+			t.Errorf("UID mapping = {%d, %d, %d}, want {0, %d, 1}", m.ContainerID, m.HostID, m.Size, os.Getuid())
+		}
+	}
+	if len(cfg.GidMappings) != 1 {
+		t.Errorf("DefaultConfig should set 1 GID mapping, got %d", len(cfg.GidMappings))
+	} else {
+		m := cfg.GidMappings[0]
+		if m.ContainerID != 0 || m.HostID != os.Getgid() || m.Size != 1 {
+			t.Errorf("GID mapping = {%d, %d, %d}, want {0, %d, 1}", m.ContainerID, m.HostID, m.Size, os.Getgid())
+		}
 	}
 
 	// Verify default values for optional fields

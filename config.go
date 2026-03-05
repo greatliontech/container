@@ -1,6 +1,7 @@
 package container
 
 import (
+	"os"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -81,7 +82,9 @@ type Config struct {
 	Hooks *Hooks
 }
 
-// DefaultConfig returns a Config with secure defaults
+// DefaultConfig returns a Config with secure defaults.
+// When NewUser is enabled (the default), UID/GID mappings are set to map
+// the current user to root inside the container.
 func DefaultConfig() Config {
 	return Config{
 		Namespaces: Namespaces{
@@ -91,6 +94,12 @@ func DefaultConfig() Config {
 			NewPID:  true,
 			NewUTS:  true,
 			NewUser: true,
+		},
+		UidMappings: []syscall.SysProcIDMap{
+			{ContainerID: 0, HostID: os.Getuid(), Size: 1},
+		},
+		GidMappings: []syscall.SysProcIDMap{
+			{ContainerID: 0, HostID: os.Getgid(), Size: 1},
 		},
 		UsePivotRoot:    true,
 		Capabilities:    DefaultCapabilitiesConfig(),
