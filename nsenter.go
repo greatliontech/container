@@ -71,12 +71,18 @@ func nsenterCreateHandler() {
 		readyF := os.NewFile(uintptr(readyFd), "ready-pipe")
 
 		// Tell parent: "setup done".
-		statusF.Write([]byte{0})
+		if _, err := statusF.Write([]byte{0}); err != nil {
+			fmt.Fprintf(os.Stderr, "nsenter: write status: %v\n", err)
+			os.Exit(1)
+		}
 		statusF.Close()
 
 		// Block until parent calls Start().
 		var buf [1]byte
-		readyF.Read(buf[:])
+		if _, err := readyF.Read(buf[:]); err != nil {
+			fmt.Fprintf(os.Stderr, "nsenter: read ready: %v\n", err)
+			os.Exit(1)
+		}
 		readyF.Close()
 	}
 
