@@ -11,21 +11,16 @@ Status key:
 
 ## Spec (top-level)
 
-- [x] Version — not stored, but parsed
+- [x] Version — parsed
 - [x] Process — converted to container.Process
 - [x] Root.Path — mapped to Config.Root
-- [ ] Root.Readonly — not enforced
+- [x] Root.Readonly — mapped to Config.ReadonlyRoot, enforced via bind remount
 - [x] Hostname — mapped to Config.Hostname
-- [ ] Domainname — no field in Config
+- [x] Domainname — mapped to Config.Domainname, set via setdomainname(2)
 - [x] Mounts — converted with option parsing (flags + data)
 - [x] Hooks — all 6 hook types converted
-- [ ] Annotations — no field in Config
+- [x] Annotations — mapped to Config.Annotations, passed to hooks via ContainerState
 - [x] Linux — see below
-- [ ] Solaris — not applicable (Linux-only)
-- [ ] Windows — not applicable
-- [ ] VM — not applicable
-- [ ] ZOS — not applicable
-- [ ] FreeBSD — not applicable
 
 ## Process
 

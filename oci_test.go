@@ -153,6 +153,47 @@ func TestFromOCISpec(t *testing.T) {
 	}
 }
 
+func TestFromOCISpec_RootReadonly(t *testing.T) {
+	spec := &specs.Spec{
+		Root: &specs.Root{Path: "/rootfs", Readonly: true},
+	}
+	cfg, _, err := FromOCISpec(spec)
+	if err != nil {
+		t.Fatalf("FromOCISpec: %v", err)
+	}
+	if !cfg.ReadonlyRoot {
+		t.Error("ReadonlyRoot should be true")
+	}
+}
+
+func TestFromOCISpec_Domainname(t *testing.T) {
+	spec := &specs.Spec{
+		Root:       &specs.Root{Path: "/rootfs"},
+		Domainname: "example.com",
+	}
+	cfg, _, err := FromOCISpec(spec)
+	if err != nil {
+		t.Fatalf("FromOCISpec: %v", err)
+	}
+	if cfg.Domainname != "example.com" {
+		t.Errorf("Domainname = %q, want example.com", cfg.Domainname)
+	}
+}
+
+func TestFromOCISpec_Annotations(t *testing.T) {
+	spec := &specs.Spec{
+		Root:        &specs.Root{Path: "/rootfs"},
+		Annotations: map[string]string{"org.test.key": "value"},
+	}
+	cfg, _, err := FromOCISpec(spec)
+	if err != nil {
+		t.Fatalf("FromOCISpec: %v", err)
+	}
+	if cfg.Annotations["org.test.key"] != "value" {
+		t.Errorf("Annotations = %v", cfg.Annotations)
+	}
+}
+
 func TestFromOCISpec_NamespaceJoin(t *testing.T) {
 	spec := &specs.Spec{
 		Root: &specs.Root{Path: "/rootfs"},

@@ -19,13 +19,14 @@ const (
 
 // ContainerState holds the complete state of a container
 type ContainerState struct {
-	ID        string    `json:"id"`
-	State     State     `json:"state"`
-	Pid       int       `json:"pid"`
-	ExitCode  int       `json:"exit_code"`
-	CreatedAt time.Time `json:"created_at"`
-	StartedAt time.Time `json:"started_at,omitempty"`
-	StoppedAt time.Time `json:"stopped_at,omitempty"`
+	ID          string            `json:"id"`
+	State       State             `json:"state"`
+	Pid         int               `json:"pid"`
+	ExitCode    int               `json:"exit_code"`
+	CreatedAt   time.Time         `json:"created_at"`
+	StartedAt   time.Time         `json:"started_at,omitempty"`
+	StoppedAt   time.Time         `json:"stopped_at,omitempty"`
+	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
 // HookType defines when a hook should be executed

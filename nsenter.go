@@ -156,6 +156,12 @@ func containerSetup(cfg *Config) error {
 		}
 	}
 
+	if cfg.Domainname != "" {
+		if err := unix.Setdomainname([]byte(cfg.Domainname)); err != nil {
+			return fmt.Errorf("setdomainname: %w", err)
+		}
+	}
+
 	// Sysctl before pivot_root — needs host /proc/sys.
 	if err := applySysctl(cfg.Sysctl); err != nil {
 		return fmt.Errorf("sysctl: %w", err)
@@ -179,6 +185,12 @@ func containerSetup(cfg *Config) error {
 			if err := syscall.Chdir("/"); err != nil {
 				return fmt.Errorf("chdir: %w", err)
 			}
+		}
+	}
+
+	if cfg.ReadonlyRoot {
+		if err := unix.Mount("", "/", "", unix.MS_BIND|unix.MS_REMOUNT|unix.MS_RDONLY|unix.MS_REC, ""); err != nil {
+			return fmt.Errorf("readonly root: %w", err)
 		}
 	}
 

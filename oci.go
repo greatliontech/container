@@ -21,9 +21,12 @@ func FromOCISpec(spec *specs.Spec) (*Config, *Process, error) {
 	// Root filesystem.
 	if spec.Root != nil {
 		cfg.Root = spec.Root.Path
+		cfg.ReadonlyRoot = spec.Root.Readonly
 	}
 
 	cfg.Hostname = spec.Hostname
+	cfg.Domainname = spec.Domainname
+	cfg.Annotations = spec.Annotations
 
 	// Mounts.
 	for _, m := range spec.Mounts {

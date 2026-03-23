@@ -73,10 +73,12 @@ type Rlimit struct {
 }
 
 type Config struct {
-	Root        string
-	Namespaces  Namespaces
-	Hostname    string
-	Mounts      []Mount
+	Root         string
+	ReadonlyRoot bool
+	Namespaces   Namespaces
+	Hostname     string
+	Domainname   string
+	Mounts       []Mount
 	UidMappings []syscall.SysProcIDMap
 	GidMappings []syscall.SysProcIDMap
 
@@ -99,6 +101,9 @@ type Config struct {
 
 	// Lifecycle
 	Hooks *Hooks
+
+	// Metadata
+	Annotations map[string]string
 
 	// Console/PTY
 	// ConsoleSocket is the path to a Unix socket where the container
