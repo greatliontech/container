@@ -137,13 +137,11 @@ func FromOCISpec(spec *specs.Spec) (*Config, *Process, error) {
 			cfg.OOMScoreAdj = p.OOMScoreAdj
 		}
 
-		// Console — Terminal flag is stored; caller must set ConsoleSocket path.
-		if p.Terminal {
-			// ConsoleSocket must be provided by the caller via cfg.ConsoleSocket.
-			if p.ConsoleSize != nil {
-				cfg.ConsoleHeight = p.ConsoleSize.Height
-				cfg.ConsoleWidth = p.ConsoleSize.Width
-			}
+		// Console — caller must set ConsoleSocket when Terminal is true.
+		cfg.Terminal = p.Terminal
+		if p.ConsoleSize != nil {
+			cfg.ConsoleHeight = p.ConsoleSize.Height
+			cfg.ConsoleWidth = p.ConsoleSize.Width
 		}
 
 		// Capabilities.

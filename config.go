@@ -109,9 +109,12 @@ type Config struct {
 	OOMScoreAdj *int
 
 	// Console/PTY
+	// Terminal indicates that the container process expects a PTY.
+	// When true, the caller must set ConsoleSocket before calling Create/Run.
+	Terminal bool
 	// ConsoleSocket is the path to a Unix socket where the container
 	// sends the master PTY fd. The parent receives it via ReceiveConsole().
-	// If empty, no PTY is allocated.
+	// If empty, no PTY is allocated (even if Terminal is true).
 	ConsoleSocket string
 	ConsoleHeight uint
 	ConsoleWidth  uint
