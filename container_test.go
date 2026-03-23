@@ -38,7 +38,7 @@ func TestContainer_BasicLifecycle(t *testing.T) {
 
 	t.Log("TestContainer_BasicLifecycle: creating rootfs...")
 	rootfs := createTestRootfs(t)
-	stateDir := t.TempDir()
+
 	containerID := generateTestID(t)
 	t.Logf("TestContainer_BasicLifecycle: containerID=%s", containerID)
 
@@ -55,10 +55,7 @@ func TestContainer_BasicLifecycle(t *testing.T) {
 	}
 
 	t.Log("TestContainer_BasicLifecycle: creating container...")
-	c, err := New(stateDir, containerID, cfg)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
+	c := New(containerID, cfg)
 
 	proc := &Process{
 		Cmd:  "/bin/sh",
@@ -85,7 +82,7 @@ func TestContainer_Hostname(t *testing.T) {
 
 	t.Log("TestContainer_Hostname: creating rootfs...")
 	rootfs := createTestRootfs(t)
-	stateDir := t.TempDir()
+
 	containerID := generateTestID(t)
 
 	cfg := Config{
@@ -102,10 +99,7 @@ func TestContainer_Hostname(t *testing.T) {
 	}
 
 	t.Log("TestContainer_Hostname: creating container...")
-	c, err := New(stateDir, containerID, cfg)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
+	c := New(containerID, cfg)
 	defer c.Destroy()
 
 	var stdout bytes.Buffer
@@ -135,7 +129,7 @@ func TestContainer_WorkDir(t *testing.T) {
 
 	t.Log("TestContainer_WorkDir: starting...")
 	rootfs := createTestRootfs(t)
-	stateDir := t.TempDir()
+
 	containerID := generateTestID(t)
 
 	// Create a test directory in rootfs
@@ -157,10 +151,7 @@ func TestContainer_WorkDir(t *testing.T) {
 	}
 
 	t.Log("TestContainer_WorkDir: creating container...")
-	c, err := New(stateDir, containerID, cfg)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
+	c := New(containerID, cfg)
 	defer c.Destroy()
 
 	var stdout bytes.Buffer
@@ -191,7 +182,7 @@ func TestContainer_Environment(t *testing.T) {
 
 	t.Log("TestContainer_Environment: starting...")
 	rootfs := createTestRootfs(t)
-	stateDir := t.TempDir()
+
 	containerID := generateTestID(t)
 
 	cfg := Config{
@@ -207,10 +198,7 @@ func TestContainer_Environment(t *testing.T) {
 	}
 
 	t.Log("TestContainer_Environment: creating container...")
-	c, err := New(stateDir, containerID, cfg)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
+	c := New(containerID, cfg)
 	defer c.Destroy()
 
 	var stdout bytes.Buffer
@@ -241,7 +229,7 @@ func TestContainer_Pipes(t *testing.T) {
 
 	t.Log("TestContainer_Pipes: starting...")
 	rootfs := createTestRootfs(t)
-	stateDir := t.TempDir()
+
 	containerID := generateTestID(t)
 
 	cfg := Config{
@@ -257,10 +245,7 @@ func TestContainer_Pipes(t *testing.T) {
 	}
 
 	t.Log("TestContainer_Pipes: creating container...")
-	c, err := New(stateDir, containerID, cfg)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
+	c := New(containerID, cfg)
 	defer c.Destroy()
 
 	proc := &Process{
@@ -312,7 +297,7 @@ func TestContainer_ExitCode(t *testing.T) {
 
 	t.Log("TestContainer_ExitCode: starting...")
 	rootfs := createTestRootfs(t)
-	stateDir := t.TempDir()
+
 
 	tests := []struct {
 		name     string
@@ -356,10 +341,7 @@ func TestContainer_ExitCode(t *testing.T) {
 			}
 
 			t.Logf("TestContainer_ExitCode/%s: creating container...", tt.name)
-			c, err := New(stateDir, containerID, cfg)
-			if err != nil {
-				t.Fatalf("New failed: %v", err)
-			}
+			c := New(containerID, cfg)
 			defer c.Destroy()
 
 			proc := &Process{
@@ -389,7 +371,7 @@ func TestContainer_PIDNamespace(t *testing.T) {
 
 	t.Log("TestContainer_PIDNamespace: starting...")
 	rootfs := createTestRootfs(t)
-	stateDir := t.TempDir()
+
 	containerID := generateTestID(t)
 
 	cfg := Config{
@@ -405,10 +387,7 @@ func TestContainer_PIDNamespace(t *testing.T) {
 	}
 
 	t.Log("TestContainer_PIDNamespace: creating container...")
-	c, err := New(stateDir, containerID, cfg)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
+	c := New(containerID, cfg)
 	defer c.Destroy()
 
 	var stdout bytes.Buffer
@@ -440,7 +419,7 @@ func TestContainer_State(t *testing.T) {
 
 	t.Log("TestContainer_State: starting...")
 	rootfs := createTestRootfs(t)
-	stateDir := t.TempDir()
+
 	containerID := generateTestID(t)
 
 	cfg := Config{
@@ -456,10 +435,7 @@ func TestContainer_State(t *testing.T) {
 	}
 
 	t.Log("TestContainer_State: creating container...")
-	c, err := New(stateDir, containerID, cfg)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
+	c := New(containerID, cfg)
 	defer c.Destroy()
 
 	// Before Run, state should be Created
@@ -500,7 +476,7 @@ func TestContainer_Stop_Graceful(t *testing.T) {
 
 	t.Log("TestContainer_Stop_Graceful: starting...")
 	rootfs := createTestRootfs(t)
-	stateDir := t.TempDir()
+
 	containerID := generateTestID(t)
 
 	cfg := Config{
@@ -516,10 +492,7 @@ func TestContainer_Stop_Graceful(t *testing.T) {
 	}
 
 	t.Log("TestContainer_Stop_Graceful: creating container...")
-	c, err := New(stateDir, containerID, cfg)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
+	c := New(containerID, cfg)
 	defer c.Destroy()
 
 	// Start a long-running process
@@ -563,7 +536,7 @@ func TestContainer_Signal(t *testing.T) {
 
 	t.Log("TestContainer_Signal: starting...")
 	rootfs := createTestRootfs(t)
-	stateDir := t.TempDir()
+
 	containerID := generateTestID(t)
 
 	cfg := Config{
@@ -579,10 +552,7 @@ func TestContainer_Signal(t *testing.T) {
 	}
 
 	t.Log("TestContainer_Signal: creating container...")
-	c, err := New(stateDir, containerID, cfg)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
+	c := New(containerID, cfg)
 	defer c.Destroy()
 
 	proc := &Process{
@@ -627,7 +597,7 @@ func TestContainer_Chroot_Fallback(t *testing.T) {
 
 	t.Log("TestContainer_Chroot_Fallback: starting...")
 	rootfs := createTestRootfs(t)
-	stateDir := t.TempDir()
+
 	containerID := generateTestID(t)
 
 	cfg := Config{
@@ -643,10 +613,7 @@ func TestContainer_Chroot_Fallback(t *testing.T) {
 	}
 
 	t.Log("TestContainer_Chroot_Fallback: creating container...")
-	c, err := New(stateDir, containerID, cfg)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
+	c := New(containerID, cfg)
 	defer c.Destroy()
 
 	var stdout bytes.Buffer
@@ -677,7 +644,7 @@ func TestContainer_Pid(t *testing.T) {
 
 	t.Log("TestContainer_Pid: starting...")
 	rootfs := createTestRootfs(t)
-	stateDir := t.TempDir()
+
 	containerID := generateTestID(t)
 
 	cfg := Config{
@@ -693,10 +660,7 @@ func TestContainer_Pid(t *testing.T) {
 	}
 
 	t.Log("TestContainer_Pid: creating container...")
-	c, err := New(stateDir, containerID, cfg)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
+	c := New(containerID, cfg)
 	defer c.Destroy()
 
 	// Before Run, Pid should be 0

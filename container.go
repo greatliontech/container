@@ -18,47 +18,41 @@ import (
 func init() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
-		case "__child":
-			child()
-		case "__exec":
-			nsenterExec()
+		case "__container":
+			nsenterCreateHandler()
+		case "__self":
+			nsenterSelfHandler()
+		case "__nsenter":
+			nsenterJoinHandler()
 		}
 	}
 }
 
 type Container struct {
-	id         string
-	cfg        Config
-	stf        string
-	cmd        *exec.Cmd
-	cgroup     *Cgroup
-	network    *Network
-	stdinPipe  io.WriteCloser
-	stdoutPipe io.ReadCloser
-	stderrPipe io.ReadCloser
+	id           string
+	cfg          Config
+	cmd          *exec.Cmd
+	containerPid int
+	exitCode     int
+	exited       bool
+	cgroup       *Cgroup
+	network      *Network
+	stdinPipe    io.WriteCloser
+	stdoutPipe   io.ReadCloser
+	stderrPipe   io.ReadCloser
 }
 
-func New(statedir, id string, cfg Config) (*Container, error) {
-	if err := os.MkdirAll(statedir, 0700); err != nil {
-		return nil, err
-	}
-	cfgData, err := json.Marshal(cfg)
-	if err != nil {
-		return nil, err
-	}
-	stf := filepath.Join(statedir, id)
-	if err := os.WriteFile(stf, cfgData, 0600); err != nil {
-		return nil, err
-	}
+// New creates a new container with the given configuration.
+func New(id string, cfg Config) *Container {
 	return &Container{
 		id:  id,
 		cfg: cfg,
-		stf: stf,
-	}, nil
+	}
 }
 
+// Run starts the container with the given process.
+// The process is executed inside namespaces configured via the C constructor.
 func (c *Container) Run(p *Process) error {
-	// Create cgroup for resource limits if configured
 	if c.cfg.Resources != nil {
 		cg, err := NewCgroup("container-" + c.id)
 		if err != nil {
@@ -71,77 +65,22 @@ func (c *Container) Run(p *Process) error {
 		}
 	}
 
-	cmd := exec.Command("/proc/self/exe", "__child", c.stf)
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Cloneflags:  c.cfg.Namespaces.CloneFlags(),
-		UidMappings: c.cfg.UidMappings,
-		GidMappings: c.cfg.GidMappings,
-		Credential:  p.Credential,
-	}
-
-	if p.StdinPipe {
-		slog.Info("stdin pipe requested")
-		pipe, err := cmd.StdinPipe()
-		if err != nil {
-			return err
-		}
-		c.stdinPipe = pipe
-	} else {
-		cmd.Stdin = p.Stdin
-	}
-
-	if p.StdoutPipe {
-		slog.Info("stdout pipe requested")
-		pipe, err := cmd.StdoutPipe()
-		if err != nil {
-			return err
-		}
-		c.stdoutPipe = pipe
-	} else {
-		cmd.Stdout = p.Stdout
-	}
-
-	if p.StderrPipe {
-		slog.Info("stderr pipe requested")
-		pipe, err := cmd.StderrPipe()
-		if err != nil {
-			return err
-		}
-		c.stderrPipe = pipe
-	} else {
-		cmd.Stderr = p.Stderr
-	}
-
-	pData, err := json.Marshal(p)
+	containerPid, err := c.startChild("__container", p, nil)
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(c.stf+".process", pData, 0600); err != nil {
-		return err
-	}
+	c.containerPid = containerPid
 
-	c.cmd = cmd
-
-	slog.Info("starting child", "cmd", cmd.Path, "args", cmd.Args)
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-
-	// Write PID file for exec
-	if err := os.WriteFile(c.stf+".pid", []byte(fmt.Sprintf("%d", cmd.Process.Pid)), 0600); err != nil {
-		slog.Warn("failed to write pid file", "error", err)
-	}
-
-	// Add process to cgroup after start
+	// Add container process to cgroup.
 	if c.cgroup != nil {
-		if err := c.cgroup.AddProcess(cmd.Process.Pid); err != nil {
+		if err := c.cgroup.AddProcess(c.containerPid); err != nil {
 			slog.Warn("failed to add process to cgroup", "error", err)
 		}
 	}
 
-	// Setup networking after process start (need PID for netns)
+	// Setup networking (needs PID for netns).
 	if c.cfg.Network != nil && c.cfg.Network.Mode == NetworkModeBridge {
-		net, err := SetupContainerNetwork(cmd.Process.Pid, *c.cfg.Network)
+		net, err := SetupContainerNetwork(c.containerPid, *c.cfg.Network)
 		if err != nil {
 			slog.Warn("failed to setup network", "error", err)
 		} else {
@@ -150,6 +89,185 @@ func (c *Container) Run(p *Process) error {
 	}
 
 	return nil
+}
+
+// RunSelf starts a container where the target binary is this process itself.
+// The child re-execs /proc/self/exe through the C constructor, and main()
+// detects InContainer() to run container-specific logic.
+func (c *Container) RunSelf(args ...string) error {
+	if c.cfg.Resources != nil {
+		cg, err := NewCgroup("container-" + c.id)
+		if err != nil {
+			slog.Warn("failed to create cgroup, running without resource limits", "error", err)
+		} else {
+			c.cgroup = cg
+			if err := cg.Apply(c.cfg.Resources); err != nil {
+				slog.Warn("failed to apply resource limits", "error", err)
+			}
+		}
+	}
+
+	containerPid, err := c.startChild("__self", nil, args)
+	if err != nil {
+		return err
+	}
+	c.containerPid = containerPid
+
+	if c.cgroup != nil {
+		if err := c.cgroup.AddProcess(c.containerPid); err != nil {
+			slog.Warn("failed to add process to cgroup", "error", err)
+		}
+	}
+
+	if c.cfg.Network != nil && c.cfg.Network.Mode == NetworkModeBridge {
+		net, err := SetupContainerNetwork(c.containerPid, *c.cfg.Network)
+		if err != nil {
+			slog.Warn("failed to setup network", "error", err)
+		} else {
+			c.network = net
+		}
+	}
+
+	return nil
+}
+
+// startChild launches the child process through the C constructor.
+// Returns the container PID (grandchild if PID namespace fork, direct child otherwise).
+func (c *Container) startChild(subcommand string, p *Process, extraArgs []string) (int, error) {
+	// Set child subreaper so forked grandchild reparents to us.
+	if err := unix.Prctl(unix.PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0); err != nil {
+		return 0, fmt.Errorf("prctl child subreaper: %w", err)
+	}
+
+	// Create pipes.
+	configR, configW, err := os.Pipe()
+	if err != nil {
+		return 0, fmt.Errorf("config pipe: %w", err)
+	}
+	initR, initW, err := os.Pipe()
+	if err != nil {
+		configR.Close()
+		configW.Close()
+		return 0, fmt.Errorf("init pipe: %w", err)
+	}
+	syncParent, syncChild, err := newSyncSocketpair()
+	if err != nil {
+		configR.Close()
+		configW.Close()
+		initR.Close()
+		initW.Close()
+		return 0, fmt.Errorf("sync socketpair: %w", err)
+	}
+
+	// Build command args.
+	args := []string{subcommand}
+	args = append(args, extraArgs...)
+
+	cmd := exec.Command("/proc/self/exe", args...)
+	cmd.ExtraFiles = []*os.File{configR, syncChild, initR}
+	cmd.Env = append(os.Environ(),
+		"_CONTAINER_MODE=setup",
+		fmt.Sprintf("_CONTAINER_CONFIGFD=%d", 3+0),
+		fmt.Sprintf("_CONTAINER_SYNCFD=%d", 3+1),
+		fmt.Sprintf("_CONTAINER_INITFD=%d", 3+2),
+	)
+
+	// Setup stdio.
+	if p != nil {
+		if p.StdinPipe {
+			pipe, err := cmd.StdinPipe()
+			if err != nil {
+				return 0, err
+			}
+			c.stdinPipe = pipe
+		} else {
+			cmd.Stdin = p.Stdin
+		}
+		if p.StdoutPipe {
+			pipe, err := cmd.StdoutPipe()
+			if err != nil {
+				return 0, err
+			}
+			c.stdoutPipe = pipe
+		} else {
+			cmd.Stdout = p.Stdout
+		}
+		if p.StderrPipe {
+			pipe, err := cmd.StderrPipe()
+			if err != nil {
+				return 0, err
+			}
+			c.stderrPipe = pipe
+		} else {
+			cmd.Stderr = p.Stderr
+		}
+	}
+
+	c.cmd = cmd
+
+	if err := cmd.Start(); err != nil {
+		syncParent.Close()
+		configW.Close()
+		initW.Close()
+		return 0, fmt.Errorf("start child: %w", err)
+	}
+
+	// Close child-side fds (child inherited them).
+	configR.Close()
+	syncChild.Close()
+	initR.Close()
+
+	// Build and write C config.
+	cConfig := &nsenterCConfig{
+		CloneFlags: uint32(c.cfg.Namespaces.CloneFlags()),
+	}
+
+	// Determine rootless self-map vs privileged parent-map.
+	if c.cfg.Namespaces.NewUser && isSingleMapping(c.cfg.UidMappings, c.cfg.GidMappings) {
+		cConfig.SelfMap = 1
+		if len(c.cfg.UidMappings) > 0 {
+			cConfig.UID = uint32(c.cfg.UidMappings[0].HostID)
+		}
+		if len(c.cfg.GidMappings) > 0 {
+			cConfig.GID = uint32(c.cfg.GidMappings[0].HostID)
+		}
+	}
+
+	joins := buildJoinSpecs(&c.cfg.Namespaces)
+	cConfig.JoinCount = uint32(len(joins))
+
+	if err := writeNsenterCConfig(configW, cConfig, joins); err != nil {
+		configW.Close()
+		initW.Close()
+		syncParent.Close()
+		return 0, fmt.Errorf("write C config: %w", err)
+	}
+	configW.Close()
+
+	// Write init data (JSON config + process for Go child handler).
+	data := initData{Config: c.cfg, Process: p}
+	if err := json.NewEncoder(initW).Encode(&data); err != nil {
+		initW.Close()
+		syncParent.Close()
+		return 0, fmt.Errorf("write init data: %w", err)
+	}
+	initW.Close()
+
+	// Run sync protocol.
+	containerPid, err := runParentSync(syncParent, cmd.Process.Pid, &c.cfg)
+	syncParent.Close()
+	if err != nil {
+		return 0, fmt.Errorf("sync protocol: %w", err)
+	}
+
+	return containerPid, nil
+}
+
+// isSingleMapping returns true if the UID/GID mappings are suitable for
+// rootless self-write (single mapping with size 1).
+func isSingleMapping(uid, gid []syscall.SysProcIDMap) bool {
+	return len(uid) == 1 && uid[0].Size == 1 &&
+		len(gid) == 1 && gid[0].Size == 1
 }
 
 func (c *Container) StdinPipe() (io.WriteCloser, error) {
@@ -173,15 +291,48 @@ func (c *Container) StderrPipe() (io.ReadCloser, error) {
 	return c.stderrPipe, nil
 }
 
+// Wait waits for the container process to exit.
 func (c *Container) Wait() error {
-	return c.cmd.Wait()
+	if c.cmd == nil {
+		return fmt.Errorf("container not started")
+	}
+
+	if c.containerPid == c.cmd.Process.Pid {
+		// No fork — direct child is the container process.
+		err := c.cmd.Wait()
+		c.exited = true
+		if c.cmd.ProcessState != nil {
+			c.exitCode = c.cmd.ProcessState.ExitCode()
+		}
+		return err
+	}
+
+	// Fork happened. cmd.Wait() blocks until all pipes close
+	// (which happens when the grandchild exits, since it inherited the fds).
+	_ = c.cmd.Wait()
+
+	// Reap the grandchild to get its exit status.
+	var ws syscall.WaitStatus
+	_, err := syscall.Wait4(c.containerPid, &ws, 0, nil)
+	c.exited = true
+	if err != nil {
+		return fmt.Errorf("wait4 container: %w", err)
+	}
+	c.exitCode = ws.ExitStatus()
+	if ws.Signaled() {
+		c.exitCode = 128 + int(ws.Signal())
+		return fmt.Errorf("container killed by signal %d", ws.Signal())
+	}
+	if ws.ExitStatus() != 0 {
+		return fmt.Errorf("container exited with status %d", ws.ExitStatus())
+	}
+	return nil
 }
 
-// Destroy cleans up container resources including cgroup and network
+// Destroy cleans up container resources.
 func (c *Container) Destroy() error {
 	var errs []error
 
-	// Clean up network
 	if c.network != nil {
 		if err := c.network.Cleanup(); err != nil {
 			errs = append(errs, err)
@@ -189,7 +340,6 @@ func (c *Container) Destroy() error {
 		c.network = nil
 	}
 
-	// Clean up cgroup
 	if c.cgroup != nil {
 		if err := c.cgroup.Delete(); err != nil {
 			errs = append(errs, err)
@@ -197,19 +347,13 @@ func (c *Container) Destroy() error {
 		c.cgroup = nil
 	}
 
-	// Clean up state files
-	os.Remove(c.stf)
-	os.Remove(c.stf + ".process")
-	os.Remove(c.stf + ".pid")
-	os.Remove(c.stf + ".log")
-
 	if len(errs) > 0 {
 		return errs[0]
 	}
 	return nil
 }
 
-// Stats returns current resource usage statistics
+// Stats returns current resource usage statistics.
 func (c *Container) Stats() (*CgroupStats, error) {
 	if c.cgroup == nil {
 		return nil, nil
@@ -217,217 +361,50 @@ func (c *Container) Stats() (*CgroupStats, error) {
 	return c.cgroup.Stats()
 }
 
-func child() {
-	if len(os.Args) < 3 {
-		os.Exit(1)
-	}
-	stf := os.Args[2]
-	pf := stf + ".process"
-	lfPath := stf + ".log"
-
-	lf, err := os.Create(lfPath)
-	if err != nil {
-		os.Exit(2)
-	}
-	defer lf.Close()
-
-	loggr := slog.New(slog.NewTextHandler(lf, nil))
-	slog.SetDefault(loggr)
-
-	slog.Info("child started", "stf", stf)
-
-	cfgData, err := os.ReadFile(stf)
-	if err != nil {
-		slog.Error("read config file:", "error", err)
-		os.Exit(1)
-	}
-
-	cfg := &Config{}
-	if err := json.Unmarshal(cfgData, cfg); err != nil {
-		slog.Error("unmarshal config:", "error", err)
-		os.Exit(1)
-	}
-
-	pfData, err := os.ReadFile(pf)
-	if err != nil {
-		slog.Error("read process file:", "error", err)
-		os.Exit(1)
-	}
-
-	p := &Process{}
-	if err := json.Unmarshal(pfData, p); err != nil {
-		slog.Error("unmarshal process:", "error", err)
-		os.Exit(1)
-	}
-
-	// Make mount namespace private to prevent propagation leaks
-	if err := unix.Mount("", "/", "", unix.MS_PRIVATE|unix.MS_REC, ""); err != nil {
-		slog.Error("mount private:", "error", err)
-		os.Exit(1)
-	}
-
-	// Execute user-specified mounts
-	for _, m := range cfg.Mounts {
-		if err := syscall.Mount(m.Source, m.Target, m.Type, m.Flags, m.Data); err != nil {
-			slog.Error("mount:", "error", err, "source", m.Source, "target", m.Target, "type", m.Type, "flags", m.Flags, "data", m.Data)
-			os.Exit(1)
-		}
-	}
-
-	if cfg.Hostname != "" {
-		if err := syscall.Sethostname([]byte(cfg.Hostname)); err != nil {
-			slog.Error("sethostname:", "error", err)
-			os.Exit(1)
-		}
-	}
-
-	// Setup /dev with minimal devices — must happen before pivot_root so
-	// we can still access host device nodes for bind-mount fallback (used
-	// in user namespaces where mknod is forbidden).
-	if cfg.SetupDev {
-		if err := setupDev(cfg.Root, cfg.Devices); err != nil {
-			slog.Error("setup dev:", "error", err)
-			os.Exit(1)
-		}
-	}
-
-	// Setup root filesystem
-	if cfg.Root != "" {
-		if cfg.UsePivotRoot {
-			if err := pivotRoot(cfg.Root); err != nil {
-				slog.Error("pivot_root:", "error", err)
-				os.Exit(1)
-			}
-		} else {
-			// Fallback to chroot
-			if err := syscall.Chroot(cfg.Root); err != nil {
-				slog.Error("chroot:", "error", err)
-				os.Exit(1)
-			}
-			if err := syscall.Chdir("/"); err != nil {
-				slog.Error("chdir:", "error", err)
-				os.Exit(1)
-			}
-		}
-	}
-
-	if p.WorkDir != "" {
-		if err := syscall.Chdir(p.WorkDir); err != nil {
-			slog.Error("chdir:", "error", err)
-			os.Exit(1)
-		}
-	}
-
-	// Apply capabilities first (before seccomp, as seccomp may block cap changes)
-	if cfg.Capabilities != nil {
-		if err := applyCapabilities(cfg.Capabilities); err != nil {
-			slog.Error("apply capabilities:", "error", err)
-			os.Exit(1)
-		}
-	}
-
-	// Set no_new_privs if not using seccomp (seccomp library sets it automatically)
-	if cfg.NoNewPrivileges && cfg.Seccomp == nil {
-		if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
-			slog.Error("set no_new_privs:", "error", err)
-			os.Exit(1)
-		}
-	}
-
-	// Apply seccomp filter (sets NO_NEW_PRIVS automatically)
-	if cfg.Seccomp != nil {
-		if err := applySeccomp(cfg.Seccomp); err != nil {
-			slog.Error("apply seccomp:", "error", err)
-			os.Exit(1)
-		}
-	}
-
-	env := []string{}
-	if p.InheritEnv {
-		env = os.Environ()
-	}
-	if len(p.Env) > 0 {
-		env = append(env, p.Env...)
-	}
-
-	// Resolve the command path via PATH lookup if it's not absolute.
-	// syscall.Exec does not do PATH resolution — it requires an absolute path.
-	cmd := p.Cmd
-	if !filepath.IsAbs(cmd) {
-		resolved, err := lookPath(cmd, env)
-		if err != nil {
-			slog.Error("lookpath:", "error", err, "cmd", cmd)
-			os.Exit(1)
-		}
-		cmd = resolved
-	}
-
-	if err := syscall.Exec(cmd, append([]string{p.Cmd}, p.Args...), env); err != nil {
-		slog.Error("exec:", "error", err)
-		os.Exit(1)
-	}
-}
-
-// pivotRoot changes the root filesystem using pivot_root syscall
-// This is more secure than chroot as it properly isolates the filesystem
+// pivotRoot changes the root filesystem using pivot_root syscall.
 func pivotRoot(newRoot string) error {
-	// pivot_root requires the new root to be a mount point
-	// Bind mount the new root to itself to ensure it's a mount point
 	if err := unix.Mount(newRoot, newRoot, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
 		return err
 	}
 
-	// Create directory for old root
 	oldRoot := filepath.Join(newRoot, ".pivot_root")
 	if err := os.MkdirAll(oldRoot, 0700); err != nil {
 		return err
 	}
 
-	// Perform the pivot_root
 	if err := unix.PivotRoot(newRoot, oldRoot); err != nil {
 		return err
 	}
 
-	// Change to new root
 	if err := unix.Chdir("/"); err != nil {
 		return err
 	}
 
-	// Unmount old root
 	oldRoot = "/.pivot_root"
 	if err := unix.Unmount(oldRoot, unix.MNT_DETACH); err != nil {
 		return err
 	}
 
-	// Remove old root mount point (best-effort — may fail on read-only rootfs
-	// such as FUSE-mounted OCI images, which is harmless after unmount).
 	os.RemoveAll(oldRoot)
 	return nil
 }
 
 // setupDev creates a minimal /dev filesystem inside the container rootfs.
-// It is called before pivot_root so that host device nodes are still accessible
-// for the bind-mount fallback (used in user namespaces where mknod is forbidden).
-// This follows the same approach as runc/libcontainer.
 func setupDev(root string, devices []Device) error {
 	devDir := filepath.Join(root, "dev")
 
-	// Mount tmpfs on /dev to get a writable filesystem.
 	if err := unix.Mount("tmpfs", devDir, "tmpfs", unix.MS_NOSUID|unix.MS_STRICTATIME, "mode=755,size=65536k"); err != nil {
 		return fmt.Errorf("mount tmpfs on /dev: %w", err)
 	}
 
-	// Create pts directory for pseudo-terminals
 	if err := os.MkdirAll(filepath.Join(devDir, "pts"), 0755); err != nil {
 		return err
 	}
 
-	// Create shm directory for shared memory
 	if err := os.MkdirAll(filepath.Join(devDir, "shm"), 1777); err != nil {
 		return err
 	}
 
-	// Create device nodes
 	if devices == nil {
 		devices = DefaultDevices()
 	}
@@ -435,13 +412,10 @@ func setupDev(root string, devices []Device) error {
 		return err
 	}
 
-	// Create standard symlinks (fd, stdin, stdout, stderr)
 	return createDevSymlinks(devDir)
 }
 
-// lookPath resolves a command name to an absolute path using the PATH
-// variable from the given environment slice. This is used in the child
-// process where os.Getenv("PATH") doesn't reflect the container's env.
+// lookPath resolves a command name to an absolute path using PATH from env.
 func lookPath(cmd string, env []string) (string, error) {
 	var path string
 	for _, e := range env {

@@ -274,36 +274,33 @@ func (sm *StateManager) ListStates() ([]*ContainerState, error) {
 
 // Stop sends stop signal and waits, then kills if necessary
 func (c *Container) Stop(config SignalConfig) error {
-	if c.cmd == nil || c.cmd.Process == nil {
+	if c.containerPid == 0 {
 		return nil
 	}
 
-	// Send stop signal
-	if err := c.cmd.Process.Signal(config.StopSignal); err != nil {
+	if err := syscall.Kill(c.containerPid, config.StopSignal); err != nil {
 		return err
 	}
 
-	// Wait with timeout
 	done := make(chan error, 1)
 	go func() {
-		done <- c.cmd.Wait()
+		done <- c.Wait()
 	}()
 
 	select {
 	case <-done:
 		return nil
 	case <-time.After(config.StopTimeout):
-		// Force kill
-		return c.cmd.Process.Kill()
+		return syscall.Kill(c.containerPid, syscall.SIGKILL)
 	}
 }
 
 // Signal sends a signal to the container process
 func (c *Container) Signal(sig syscall.Signal) error {
-	if c.cmd == nil || c.cmd.Process == nil {
+	if c.containerPid == 0 {
 		return fmt.Errorf("container not running")
 	}
-	return c.cmd.Process.Signal(sig)
+	return syscall.Kill(c.containerPid, sig)
 }
 
 // State returns the current container state
@@ -319,16 +316,13 @@ func (c *Container) State() State {
 
 // Pid returns the container's main process ID
 func (c *Container) Pid() int {
-	if c.cmd == nil || c.cmd.Process == nil {
-		return 0
-	}
-	return c.cmd.Process.Pid
+	return c.containerPid
 }
 
-// ExitCode returns the container's exit code (0 if still running)
+// ExitCode returns the container's exit code (0 if still running or not yet waited)
 func (c *Container) ExitCode() int {
-	if c.cmd == nil || c.cmd.ProcessState == nil {
+	if !c.exited {
 		return 0
 	}
-	return c.cmd.ProcessState.ExitCode()
+	return c.exitCode
 }

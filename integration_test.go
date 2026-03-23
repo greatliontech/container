@@ -21,7 +21,6 @@ func TestIntegration_SeccompBlocks(t *testing.T) {
 
 	t.Log("TestIntegration_SeccompBlocks: starting...")
 	rootfs := createTestRootfs(t)
-	stateDir := t.TempDir()
 	containerID := generateTestID(t)
 
 	cfg := Config{
@@ -38,16 +37,9 @@ func TestIntegration_SeccompBlocks(t *testing.T) {
 	}
 
 	t.Log("TestIntegration_SeccompBlocks: creating container...")
-	c, err := New(stateDir, containerID, cfg)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
+	c := New(containerID, cfg)
 	defer func() {
 		// Read child log before cleanup
-		logPath := filepath.Join(stateDir, containerID+".log")
-		if data, err := os.ReadFile(logPath); err == nil {
-			t.Logf("Child log:\n%s", string(data))
-		}
 		c.Destroy()
 	}()
 
@@ -85,7 +77,6 @@ func TestIntegration_DevicesAccessible(t *testing.T) {
 
 	t.Log("TestIntegration_DevicesAccessible: starting...")
 	rootfs := createTestRootfs(t)
-	stateDir := t.TempDir()
 	containerID := generateTestID(t)
 
 	cfg := Config{
@@ -102,10 +93,7 @@ func TestIntegration_DevicesAccessible(t *testing.T) {
 	}
 
 	t.Log("TestIntegration_DevicesAccessible: creating container...")
-	c, err := New(stateDir, containerID, cfg)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
+	c := New(containerID, cfg)
 	defer c.Destroy()
 
 	// Test /dev/null
@@ -138,7 +126,6 @@ func TestIntegration_DevicesUrandom(t *testing.T) {
 
 	t.Log("TestIntegration_DevicesUrandom: starting...")
 	rootfs := createTestRootfs(t)
-	stateDir := t.TempDir()
 	containerID := generateTestID(t)
 
 	cfg := Config{
@@ -155,10 +142,7 @@ func TestIntegration_DevicesUrandom(t *testing.T) {
 	}
 
 	t.Log("TestIntegration_DevicesUrandom: creating container...")
-	c, err := New(stateDir, containerID, cfg)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
+	c := New(containerID, cfg)
 	defer c.Destroy()
 
 	// Test /dev/urandom
@@ -192,7 +176,6 @@ func TestIntegration_MemoryLimit(t *testing.T) {
 
 	t.Log("TestIntegration_MemoryLimit: starting...")
 	rootfs := createTestRootfs(t)
-	stateDir := t.TempDir()
 	containerID := generateTestID(t)
 
 	cfg := Config{
@@ -216,10 +199,7 @@ func TestIntegration_MemoryLimit(t *testing.T) {
 	}
 
 	t.Log("TestIntegration_MemoryLimit: creating container...")
-	c, err := New(stateDir, containerID, cfg)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
+	c := New(containerID, cfg)
 	defer c.Destroy()
 
 	// Just verify the container runs with limits
@@ -253,7 +233,6 @@ func TestIntegration_PidsLimit(t *testing.T) {
 
 	t.Log("TestIntegration_PidsLimit: starting...")
 	rootfs := createTestRootfs(t)
-	stateDir := t.TempDir()
 	containerID := generateTestID(t)
 
 	cfg := Config{
@@ -274,10 +253,7 @@ func TestIntegration_PidsLimit(t *testing.T) {
 	}
 
 	t.Log("TestIntegration_PidsLimit: creating container...")
-	c, err := New(stateDir, containerID, cfg)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
+	c := New(containerID, cfg)
 	defer c.Destroy()
 
 	// Just verify the container runs with pids limit
@@ -310,7 +286,6 @@ func TestIntegration_NetworkNone(t *testing.T) {
 
 	t.Log("TestIntegration_NetworkNone: starting...")
 	rootfs := createTestRootfs(t)
-	stateDir := t.TempDir()
 	containerID := generateTestID(t)
 
 	cfg := Config{
@@ -330,10 +305,7 @@ func TestIntegration_NetworkNone(t *testing.T) {
 	}
 
 	t.Log("TestIntegration_NetworkNone: creating container...")
-	c, err := New(stateDir, containerID, cfg)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
+	c := New(containerID, cfg)
 	defer c.Destroy()
 
 	var stdout bytes.Buffer
@@ -399,10 +371,7 @@ func TestIntegration_Hooks(t *testing.T) {
 	}
 
 	t.Log("TestIntegration_Hooks: creating container...")
-	c, err := New(stateDir, containerID, cfg)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
+	c := New(containerID, cfg)
 	defer c.Destroy()
 
 	proc := &Process{
@@ -430,7 +399,6 @@ func TestIntegration_Stats(t *testing.T) {
 
 	t.Log("TestIntegration_Stats: starting...")
 	rootfs := createTestRootfs(t)
-	stateDir := t.TempDir()
 	containerID := generateTestID(t)
 
 	cfg := Config{
@@ -447,10 +415,7 @@ func TestIntegration_Stats(t *testing.T) {
 	}
 
 	t.Log("TestIntegration_Stats: creating container...")
-	c, err := New(stateDir, containerID, cfg)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
+	c := New(containerID, cfg)
 	defer c.Destroy()
 
 	proc := &Process{
@@ -497,7 +462,6 @@ func TestIntegration_ConcurrentContainers(t *testing.T) {
 
 	t.Log("TestIntegration_ConcurrentContainers: starting...")
 	rootfs := createTestRootfs(t)
-	stateDir := t.TempDir()
 
 	numContainers := 3
 	containers := make([]*Container, numContainers)
@@ -522,10 +486,7 @@ func TestIntegration_ConcurrentContainers(t *testing.T) {
 		}
 
 		t.Logf("TestIntegration_ConcurrentContainers: creating container %d...", i)
-		c, err := New(stateDir, containerID, cfg)
-		if err != nil {
-			t.Fatalf("New failed for container %d: %v", i, err)
-		}
+		c := New(containerID, cfg)
 		containers[i] = c
 
 		proc := &Process{
@@ -570,7 +531,6 @@ func TestIntegration_InvalidConfig(t *testing.T) {
 	skipIfNotRoot(t)
 
 	t.Log("TestIntegration_InvalidConfig: starting...")
-	stateDir := t.TempDir()
 	containerID := generateTestID(t)
 
 	// Config with non-existent rootfs
@@ -583,10 +543,7 @@ func TestIntegration_InvalidConfig(t *testing.T) {
 	}
 
 	t.Log("TestIntegration_InvalidConfig: creating container with invalid rootfs...")
-	c, err := New(stateDir, containerID, cfg)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
+	c := New(containerID, cfg)
 	defer c.Destroy()
 
 	proc := &Process{
@@ -595,7 +552,7 @@ func TestIntegration_InvalidConfig(t *testing.T) {
 
 	// Run should fail because rootfs doesn't exist
 	t.Log("TestIntegration_InvalidConfig: running (should fail)...")
-	err = c.Run(proc)
+	err := c.Run(proc)
 	if err == nil {
 		t.Log("TestIntegration_InvalidConfig: Run succeeded, waiting...")
 		c.Wait()
@@ -611,7 +568,6 @@ func TestIntegration_SignalDuringStartup(t *testing.T) {
 
 	t.Log("TestIntegration_SignalDuringStartup: starting...")
 	rootfs := createTestRootfs(t)
-	stateDir := t.TempDir()
 	containerID := generateTestID(t)
 
 	cfg := Config{
@@ -627,10 +583,7 @@ func TestIntegration_SignalDuringStartup(t *testing.T) {
 	}
 
 	t.Log("TestIntegration_SignalDuringStartup: creating container...")
-	c, err := New(stateDir, containerID, cfg)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
+	c := New(containerID, cfg)
 	defer c.Destroy()
 
 	proc := &Process{
@@ -646,7 +599,7 @@ func TestIntegration_SignalDuringStartup(t *testing.T) {
 	// Send signal immediately (during startup)
 	t.Log("TestIntegration_SignalDuringStartup: sending SIGKILL immediately...")
 	time.Sleep(10 * time.Millisecond)
-	err = c.Signal(syscall.SIGKILL)
+	err := c.Signal(syscall.SIGKILL)
 	if err != nil {
 		t.Logf("TestIntegration_SignalDuringStartup: Signal error (may be expected): %v", err)
 	}
@@ -673,7 +626,6 @@ func TestIntegration_MultipleNamespaceIsolation(t *testing.T) {
 
 	t.Log("TestIntegration_MultipleNamespaceIsolation: starting...")
 	rootfs := createTestRootfs(t)
-	stateDir := t.TempDir()
 	containerID := generateTestID(t)
 
 	cfg := Config{
@@ -691,10 +643,7 @@ func TestIntegration_MultipleNamespaceIsolation(t *testing.T) {
 	}
 
 	t.Log("TestIntegration_MultipleNamespaceIsolation: creating container...")
-	c, err := New(stateDir, containerID, cfg)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
+	c := New(containerID, cfg)
 	defer c.Destroy()
 
 	// Verify multiple aspects of isolation
@@ -732,7 +681,6 @@ func TestIntegration_ExecWithNsenter(t *testing.T) {
 
 	t.Log("TestIntegration_ExecWithNsenter: starting...")
 	rootfs := createTestRootfs(t)
-	stateDir := t.TempDir()
 	containerID := generateTestID(t)
 
 	cfg := Config{
@@ -749,15 +697,8 @@ func TestIntegration_ExecWithNsenter(t *testing.T) {
 	}
 
 	t.Log("TestIntegration_ExecWithNsenter: creating container...")
-	c, err := New(stateDir, containerID, cfg)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
+	c := New(containerID, cfg)
 	defer func() {
-		logPath := filepath.Join(stateDir, containerID+".log")
-		if data, err := os.ReadFile(logPath); err == nil {
-			t.Logf("Child log:\n%s", string(data))
-		}
 		c.Destroy()
 	}()
 
@@ -820,7 +761,6 @@ func TestIntegration_ExecWithNsenter_UserNs(t *testing.T) {
 
 	t.Log("TestIntegration_ExecWithNsenter_UserNs: starting...")
 	rootfs := createTestRootfs(t)
-	stateDir := t.TempDir()
 	containerID := generateTestID(t)
 
 	cfg := Config{
@@ -840,15 +780,8 @@ func TestIntegration_ExecWithNsenter_UserNs(t *testing.T) {
 	}
 
 	t.Log("TestIntegration_ExecWithNsenter_UserNs: creating container...")
-	c, err := New(stateDir, containerID, cfg)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
+	c := New(containerID, cfg)
 	defer func() {
-		logPath := filepath.Join(stateDir, containerID+".log")
-		if data, err := os.ReadFile(logPath); err == nil {
-			t.Logf("Child log:\n%s", string(data))
-		}
 		c.Destroy()
 	}()
 
@@ -929,7 +862,6 @@ func TestIntegration_ExecNoUserNs(t *testing.T) {
 
 	t.Log("TestIntegration_ExecNoUserNs: starting...")
 	rootfs := createTestRootfs(t)
-	stateDir := t.TempDir()
 	containerID := generateTestID(t)
 
 	cfg := Config{
@@ -947,15 +879,8 @@ func TestIntegration_ExecNoUserNs(t *testing.T) {
 	}
 
 	t.Log("TestIntegration_ExecNoUserNs: creating container...")
-	c, err := New(stateDir, containerID, cfg)
-	if err != nil {
-		t.Fatalf("New failed: %v", err)
-	}
+	c := New(containerID, cfg)
 	defer func() {
-		logPath := filepath.Join(stateDir, containerID+".log")
-		if data, err := os.ReadFile(logPath); err == nil {
-			t.Logf("Child log:\n%s", string(data))
-		}
 		c.Destroy()
 	}()
 

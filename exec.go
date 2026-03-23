@@ -5,56 +5,93 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
-	"syscall"
+	"strings"
 
 	"github.com/vishvananda/netns"
-	"golang.org/x/sys/unix"
 )
 
-// ExecConfig configures how to exec into a running container
+// ExecConfig configures how to exec into a running container.
 type ExecConfig struct {
-	// Cmd is the command to execute
-	Cmd string
-	// Args are the command arguments
-	Args []string
-	// Env are environment variables
-	Env []string
-	// WorkDir is the working directory
+	Cmd     string
+	Args    []string
+	Env     []string
 	WorkDir string
-	// Root is the root filesystem path (for chroot-based containers)
-	Root string
-	// Stdin is the stdin reader
-	Stdin io.Reader
-	// Stdout is the stdout writer
-	Stdout io.Writer
-	// Stderr is the stderr writer
-	Stderr io.Writer
+	Root    string
+	Stdin   io.Reader
+	Stdout  io.Writer
+	Stderr  io.Writer
 }
 
-// Exec executes a command in the container's namespaces
-// Note: Due to Go's multithreading model, we cannot safely join user namespaces.
-// This uses nsenter(1) as a workaround for proper namespace joining.
+// Exec executes a command in the container's namespaces.
 func (c *Container) Exec(config ExecConfig) (*exec.Cmd, error) {
-	if c.cmd == nil || c.cmd.Process == nil {
+	if c.containerPid == 0 {
 		return nil, fmt.Errorf("container not running")
 	}
 
-	// Only set root for chroot mode - pivot_root changes the mount namespace root
 	if config.Root == "" && !c.cfg.UsePivotRoot {
 		config.Root = c.cfg.Root
 	}
 
-	pid := c.cmd.Process.Pid
-	return ExecWithNsenter(pid, config)
+	return ExecWithNsenter(c.containerPid, config)
 }
 
-// ExecWithNsenter uses the nsenter(1) utility to properly enter all namespaces
-// This is the safest approach as nsenter is a single-threaded C program
+// ExecWithNsenter enters all namespaces of the target process and executes a command.
+// When built with CGO, this uses the built-in C constructor (no external dependencies).
+// Without CGO, falls back to the external nsenter(1) utility.
 func ExecWithNsenter(pid int, config ExecConfig) (*exec.Cmd, error) {
-	// Build nsenter command
-	// nsenter will enter all namespaces of the target process
+	if builtinNsenter {
+		return execBuiltin(pid, config)
+	}
+	return execExternal(pid, config)
+}
+
+// execBuiltin uses /proc/self/exe re-exec with the C constructor for namespace joining.
+func execBuiltin(pid int, config ExecConfig) (*exec.Cmd, error) {
+	args := []string{"__nsenter"}
+
+	if config.Root != "" {
+		args = append(args, fmt.Sprintf("--root=%s", config.Root))
+	}
+	if config.WorkDir != "" {
+		args = append(args, fmt.Sprintf("--wd=%s", config.WorkDir))
+	}
+
+	args = append(args, "--", config.Cmd)
+	args = append(args, config.Args...)
+
+	cmd := exec.Command("/proc/self/exe", args...)
+
+	env := config.Env
+	if len(env) == 0 {
+		env = os.Environ()
+	}
+	// Add mode and target PID for the C constructor.
+	env = append(env,
+		"_CONTAINER_MODE=join",
+		fmt.Sprintf("_CONTAINER_PID=%d", pid),
+	)
+	cmd.Env = env
+
+	cmd.Stdin = config.Stdin
+	cmd.Stdout = config.Stdout
+	cmd.Stderr = config.Stderr
+
+	if cmd.Stdin == nil {
+		cmd.Stdin = os.Stdin
+	}
+	if cmd.Stdout == nil {
+		cmd.Stdout = os.Stdout
+	}
+	if cmd.Stderr == nil {
+		cmd.Stderr = os.Stderr
+	}
+
+	return cmd, nil
+}
+
+// execExternal uses the external nsenter(1) utility (fallback when CGO is disabled).
+func execExternal(pid int, config ExecConfig) (*exec.Cmd, error) {
 	args := []string{
 		fmt.Sprintf("--target=%d", pid),
 		"--mount",
@@ -64,25 +101,19 @@ func ExecWithNsenter(pid int, config ExecConfig) (*exec.Cmd, error) {
 		"--pid",
 	}
 
-	// Only enter user namespace if target is in a different user namespace than us
-	// Every process has /proc/PID/ns/user, but entering the same namespace fails
 	targetUserNs, err1 := os.Readlink(fmt.Sprintf("/proc/%d/ns/user", pid))
 	selfUserNs, err2 := os.Readlink("/proc/self/ns/user")
 	if err1 == nil && err2 == nil && targetUserNs != selfUserNs {
 		args = append(args, "--user")
 	}
 
-	// Add root filesystem if specified (needed for chroot-based containers)
 	if config.Root != "" {
 		args = append(args, fmt.Sprintf("--root=%s", config.Root))
 	}
-
-	// Add working directory if specified
 	if config.WorkDir != "" {
 		args = append(args, fmt.Sprintf("--wd=%s", config.WorkDir))
 	}
 
-	// Add the command to execute
 	args = append(args, "--", config.Cmd)
 	args = append(args, config.Args...)
 
@@ -109,99 +140,31 @@ func ExecWithNsenter(pid int, config ExecConfig) (*exec.Cmd, error) {
 	return cmd, nil
 }
 
-// ExecNoUserNs executes in container namespaces except user namespace.
-//
-// WARNING: This function has significant limitations due to Go's runtime being
-// multithreaded. The setns() syscall for mount namespace requires a single-threaded
-// process, which Go cannot guarantee. This will likely fail with EINVAL.
-//
-// For reliable exec into containers, use ExecWithNsenter instead, which delegates
-// to the nsenter(1) utility (a single-threaded C program).
-//
-// This function is kept for cases where you only need to enter non-mount namespaces
-// or when called very early before Go's runtime spawns additional threads.
-func ExecNoUserNs(pid int, config ExecConfig) error {
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
+// SelfContainerize re-execs the current process inside a container.
+// The original process waits for the containerized instance and returns its exit code.
+// The containerized instance's main() should check InContainer() to detect it's inside.
+func SelfContainerize(cfg Config) (int, error) {
+	c := New("self", cfg)
 
-	// Enter non-user namespaces (these are safe to enter from Go)
-	nsTypes := []struct {
-		name string
-		flag int
-	}{
-		{"mnt", unix.CLONE_NEWNS},
-		{"uts", unix.CLONE_NEWUTS},
-		{"ipc", unix.CLONE_NEWIPC},
-		{"net", unix.CLONE_NEWNET},
-		// Note: PID namespace only affects children, not the calling process
+	if err := c.RunSelf(os.Args[1:]...); err != nil {
+		return 1, err
 	}
 
-	for _, ns := range nsTypes {
-		nsPath := filepath.Join("/proc", fmt.Sprintf("%d", pid), "ns", ns.name)
-		fd, err := unix.Open(nsPath, unix.O_RDONLY|unix.O_CLOEXEC, 0)
-		if err != nil {
-			continue // Namespace might not exist
-		}
-		if err := unix.Setns(fd, ns.flag); err != nil {
-			unix.Close(fd)
-			return fmt.Errorf("setns %s: %w", ns.name, err)
-		}
-		unix.Close(fd)
-	}
-
-	// Change to container's root filesystem via /proc/PID/root
-	rootPath := fmt.Sprintf("/proc/%d/root", pid)
-	if err := unix.Chroot(rootPath); err != nil {
-		return fmt.Errorf("chroot: %w", err)
-	}
-	if err := unix.Chdir("/"); err != nil {
-		return fmt.Errorf("chdir: %w", err)
-	}
-
-	if config.WorkDir != "" {
-		if err := unix.Chdir(config.WorkDir); err != nil {
-			return fmt.Errorf("chdir workdir: %w", err)
+	err := c.Wait()
+	exitCode := 0
+	if err != nil {
+		exitCode = 1
+		// Try to extract exit code from error message.
+		if strings.Contains(err.Error(), "exited with status") {
+			fmt.Sscanf(err.Error(), "container exited with status %d", &exitCode)
 		}
 	}
 
-	// Execute the command (replaces current process)
-	env := config.Env
-	if len(env) == 0 {
-		env = os.Environ()
-	}
-
-	return syscall.Exec(config.Cmd, append([]string{config.Cmd}, config.Args...), env)
+	c.Destroy()
+	return exitCode, err
 }
 
-// nsenterExec is called when binary is invoked with __exec
-// Uses the /proc/PID/root approach which doesn't require joining user namespace
-func nsenterExec() {
-	if len(os.Args) < 4 {
-		fmt.Fprintf(os.Stderr, "usage: __exec <pid> <cmd> [args...]\n")
-		os.Exit(1)
-	}
-
-	var pid int
-	if _, err := fmt.Sscanf(os.Args[2], "%d", &pid); err != nil {
-		fmt.Fprintf(os.Stderr, "invalid pid: %s\n", os.Args[2])
-		os.Exit(1)
-	}
-
-	config := ExecConfig{
-		Cmd:  os.Args[3],
-		Args: os.Args[4:],
-		Env:  os.Environ(),
-	}
-
-	if err := ExecNoUserNs(pid, config); err != nil {
-		fmt.Fprintf(os.Stderr, "exec failed: %v\n", err)
-		os.Exit(1)
-	}
-}
-
-// JoinNetworkNamespace joins the network namespace of another process
-// This is safe to call from Go as network namespace doesn't have the
-// same threading issues as user namespace
+// JoinNetworkNamespace joins the network namespace of another process.
 func JoinNetworkNamespace(pid int) error {
 	nsPath := fmt.Sprintf("/proc/%d/ns/net", pid)
 	ns, err := netns.GetFromPath(nsPath)
@@ -214,13 +177,13 @@ func JoinNetworkNamespace(pid int) error {
 	return netns.Set(ns)
 }
 
-// GetNamespacePaths returns paths to all namespace files for a process
+// GetNamespacePaths returns paths to all namespace files for a process.
 func GetNamespacePaths(pid int) map[string]string {
 	nsTypes := []string{"user", "mnt", "uts", "ipc", "net", "pid", "cgroup"}
 	result := make(map[string]string)
 
 	for _, ns := range nsTypes {
-		path := filepath.Join("/proc", fmt.Sprintf("%d", pid), "ns", ns)
+		path := fmt.Sprintf("/proc/%d/ns/%s", pid, ns)
 		if _, err := os.Stat(path); err == nil {
 			result[ns] = path
 		}

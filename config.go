@@ -14,6 +14,14 @@ type Namespaces struct {
 	NewPID  bool
 	NewUTS  bool
 	NewUser bool
+	// Join existing namespaces instead of creating new ones.
+	// Paths to namespace fds, e.g. /proc/<pid>/ns/net.
+	JoinIPC  string
+	JoinMnt  string
+	JoinNet  string
+	JoinPID  string
+	JoinUTS  string
+	JoinUser string
 }
 
 func (n Namespaces) CloneFlags() uintptr {

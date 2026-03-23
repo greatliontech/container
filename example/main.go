@@ -108,11 +108,7 @@ func main() {
 	// container.WriteResolvConf(trgtroot, cfg.Network.DNS)
 	// container.WriteHosts(trgtroot, cfg.Hostname, cfg.Network.IPAddress)
 
-	cont, err := container.New("/tmp/contstatetest", contID, cfg)
-	if err != nil {
-		slog.Error("failed to create container", "msg", err)
-		os.Exit(1)
-	}
+	cont := container.New(contID, cfg)
 
 	p := &container.Process{
 		Cmd:    "/bin/sh",
