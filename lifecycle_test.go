@@ -2,7 +2,6 @@ package container
 
 import (
 	"os"
-	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
@@ -59,129 +58,6 @@ func TestDefaultSignalConfig(t *testing.T) {
 		if !signalSet[req] {
 			t.Errorf("ForwardSignals missing %v", req)
 		}
-	}
-}
-
-func TestStateManager_CRUD(t *testing.T) {
-	tmpDir := t.TempDir()
-	sm := NewStateManager(tmpDir)
-
-	// Create a test state
-	state := &ContainerState{
-		ID:        "test-container-1",
-		State:     StateRunning,
-		Pid:       12345,
-		ExitCode:  0,
-		CreatedAt: time.Now(),
-		StartedAt: time.Now(),
-	}
-
-	// Save state
-	if err := sm.SaveState(state); err != nil {
-		t.Fatalf("SaveState failed: %v", err)
-	}
-
-	// Verify file was created
-	statePath := filepath.Join(tmpDir, state.ID+".state")
-	if !fileExists(statePath) {
-		t.Error("state file not created")
-	}
-
-	// Load state
-	loaded, err := sm.LoadState(state.ID)
-	if err != nil {
-		t.Fatalf("LoadState failed: %v", err)
-	}
-
-	// Verify loaded state
-	if loaded.ID != state.ID {
-		t.Errorf("loaded ID = %s, want %s", loaded.ID, state.ID)
-	}
-	if loaded.State != state.State {
-		t.Errorf("loaded State = %s, want %s", loaded.State, state.State)
-	}
-	if loaded.Pid != state.Pid {
-		t.Errorf("loaded Pid = %d, want %d", loaded.Pid, state.Pid)
-	}
-	if loaded.ExitCode != state.ExitCode {
-		t.Errorf("loaded ExitCode = %d, want %d", loaded.ExitCode, state.ExitCode)
-	}
-
-	// Delete state
-	if err := sm.DeleteState(state.ID); err != nil {
-		t.Fatalf("DeleteState failed: %v", err)
-	}
-
-	// Verify file was removed
-	if fileExists(statePath) {
-		t.Error("state file should be removed after delete")
-	}
-}
-
-func TestStateManager_ListEmpty(t *testing.T) {
-	tmpDir := t.TempDir()
-	sm := NewStateManager(tmpDir)
-
-	// List on empty directory
-	states, err := sm.ListStates()
-	if err != nil {
-		t.Fatalf("ListStates failed: %v", err)
-	}
-
-	if states != nil && len(states) != 0 {
-		t.Errorf("ListStates on empty dir = %v, want nil or empty", states)
-	}
-}
-
-func TestStateManager_ListNonexistent(t *testing.T) {
-	sm := NewStateManager("/nonexistent/path/that/does/not/exist")
-
-	// List on non-existent directory should return nil (not error)
-	states, err := sm.ListStates()
-	if err != nil {
-		t.Fatalf("ListStates on nonexistent dir failed: %v", err)
-	}
-
-	if states != nil {
-		t.Errorf("ListStates on nonexistent dir = %v, want nil", states)
-	}
-}
-
-func TestStateManager_List(t *testing.T) {
-	tmpDir := t.TempDir()
-	sm := NewStateManager(tmpDir)
-
-	// Create multiple states
-	for i := 1; i <= 3; i++ {
-		state := &ContainerState{
-			ID:        "test-container-" + string(rune('0'+i)),
-			State:     StateRunning,
-			Pid:       12340 + i,
-			CreatedAt: time.Now(),
-		}
-		if err := sm.SaveState(state); err != nil {
-			t.Fatalf("SaveState failed: %v", err)
-		}
-	}
-
-	// List all states
-	states, err := sm.ListStates()
-	if err != nil {
-		t.Fatalf("ListStates failed: %v", err)
-	}
-
-	if len(states) != 3 {
-		t.Errorf("ListStates length = %d, want 3", len(states))
-	}
-}
-
-func TestStateManager_LoadNotFound(t *testing.T) {
-	tmpDir := t.TempDir()
-	sm := NewStateManager(tmpDir)
-
-	_, err := sm.LoadState("nonexistent")
-	if err == nil {
-		t.Error("LoadState should fail for nonexistent state")
 	}
 }
 
@@ -381,23 +257,3 @@ func TestRunHooks_WithFailingCommand(t *testing.T) {
 	}
 }
 
-func TestStateManager_SaveCreatesDirectory(t *testing.T) {
-	tmpDir := t.TempDir()
-	stateDir := filepath.Join(tmpDir, "nested", "state", "dir")
-	sm := NewStateManager(stateDir)
-
-	state := &ContainerState{
-		ID:        "test",
-		State:     StateCreated,
-		CreatedAt: time.Now(),
-	}
-
-	// SaveState should create the directory
-	if err := sm.SaveState(state); err != nil {
-		t.Fatalf("SaveState failed: %v", err)
-	}
-
-	if !dirExists(stateDir) {
-		t.Error("SaveState should create state directory")
-	}
-}

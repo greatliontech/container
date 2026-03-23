@@ -3,9 +3,7 @@ package container
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"syscall"
 	"time"
 )
@@ -164,76 +162,6 @@ func DefaultSignalConfig() SignalConfig {
 			syscall.SIGUSR2,
 		},
 	}
-}
-
-// StateManager manages container state persistence
-type StateManager struct {
-	stateDir string
-}
-
-// NewStateManager creates a new state manager
-func NewStateManager(stateDir string) *StateManager {
-	return &StateManager{stateDir: stateDir}
-}
-
-// SaveState saves container state to disk
-func (sm *StateManager) SaveState(state *ContainerState) error {
-	if err := os.MkdirAll(sm.stateDir, 0700); err != nil {
-		return err
-	}
-
-	data, err := json.MarshalIndent(state, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(filepath.Join(sm.stateDir, state.ID+".state"), data, 0600)
-}
-
-// LoadState loads container state from disk
-func (sm *StateManager) LoadState(id string) (*ContainerState, error) {
-	data, err := os.ReadFile(filepath.Join(sm.stateDir, id+".state"))
-	if err != nil {
-		return nil, err
-	}
-
-	state := &ContainerState{}
-	if err := json.Unmarshal(data, state); err != nil {
-		return nil, err
-	}
-
-	return state, nil
-}
-
-// DeleteState removes container state from disk
-func (sm *StateManager) DeleteState(id string) error {
-	return os.Remove(filepath.Join(sm.stateDir, id+".state"))
-}
-
-// ListStates returns all container states
-func (sm *StateManager) ListStates() ([]*ContainerState, error) {
-	entries, err := os.ReadDir(sm.stateDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-
-	var states []*ContainerState
-	for _, entry := range entries {
-		if filepath.Ext(entry.Name()) != ".state" {
-			continue
-		}
-		id := entry.Name()[:len(entry.Name())-6] // Remove .state suffix
-		state, err := sm.LoadState(id)
-		if err != nil {
-			continue
-		}
-		states = append(states, state)
-	}
-
-	return states, nil
 }
 
 // Stop sends stop signal and waits, then kills if necessary
