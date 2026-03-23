@@ -35,18 +35,10 @@ func (c *Container) Exec(config ExecConfig) (*exec.Cmd, error) {
 	return ExecWithNsenter(c.containerPid, config)
 }
 
-// ExecWithNsenter enters all namespaces of the target process and executes a command.
-// When built with CGO, this uses the built-in C constructor (no external dependencies).
-// Without CGO, falls back to the external nsenter(1) utility.
-func ExecWithNsenter(pid int, config ExecConfig) (*exec.Cmd, error) {
-	if builtinNsenter {
-		return execBuiltin(pid, config)
-	}
-	return execExternal(pid, config)
-}
-
-// execBuiltin uses /proc/self/exe re-exec with the C constructor for namespace joining.
-func execBuiltin(pid int, config ExecConfig) (*exec.Cmd, error) {
+// execReexec builds a re-exec command that joins the target's namespaces.
+// With CGO, the C constructor handles setns + exec.
+// Without CGO, the Go join handler does setns for safe namespaces.
+func execReexec(pid int, config ExecConfig) (*exec.Cmd, error) {
 	args := []string{"__nsenter"}
 
 	if config.Root != "" {
@@ -65,62 +57,11 @@ func execBuiltin(pid int, config ExecConfig) (*exec.Cmd, error) {
 	if len(env) == 0 {
 		env = os.Environ()
 	}
-	// Add mode and target PID for the C constructor.
 	env = append(env,
 		"_CONTAINER_MODE=join",
 		fmt.Sprintf("_CONTAINER_PID=%d", pid),
 	)
 	cmd.Env = env
-
-	cmd.Stdin = config.Stdin
-	cmd.Stdout = config.Stdout
-	cmd.Stderr = config.Stderr
-
-	if cmd.Stdin == nil {
-		cmd.Stdin = os.Stdin
-	}
-	if cmd.Stdout == nil {
-		cmd.Stdout = os.Stdout
-	}
-	if cmd.Stderr == nil {
-		cmd.Stderr = os.Stderr
-	}
-
-	return cmd, nil
-}
-
-// execExternal uses the external nsenter(1) utility (fallback when CGO is disabled).
-func execExternal(pid int, config ExecConfig) (*exec.Cmd, error) {
-	args := []string{
-		fmt.Sprintf("--target=%d", pid),
-		"--mount",
-		"--uts",
-		"--ipc",
-		"--net",
-		"--pid",
-	}
-
-	targetUserNs, err1 := os.Readlink(fmt.Sprintf("/proc/%d/ns/user", pid))
-	selfUserNs, err2 := os.Readlink("/proc/self/ns/user")
-	if err1 == nil && err2 == nil && targetUserNs != selfUserNs {
-		args = append(args, "--user")
-	}
-
-	if config.Root != "" {
-		args = append(args, fmt.Sprintf("--root=%s", config.Root))
-	}
-	if config.WorkDir != "" {
-		args = append(args, fmt.Sprintf("--wd=%s", config.WorkDir))
-	}
-
-	args = append(args, "--", config.Cmd)
-	args = append(args, config.Args...)
-
-	cmd := exec.Command("nsenter", args...)
-	cmd.Env = config.Env
-	if len(cmd.Env) == 0 {
-		cmd.Env = os.Environ()
-	}
 
 	cmd.Stdin = config.Stdin
 	cmd.Stdout = config.Stdout
