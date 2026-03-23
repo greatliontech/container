@@ -8,20 +8,24 @@ import (
 )
 
 type Namespaces struct {
-	NewIPC  bool
-	NewMnt  bool
-	NewNet  bool
-	NewPID  bool
-	NewUTS  bool
-	NewUser bool
+	NewIPC    bool
+	NewMnt    bool
+	NewNet    bool
+	NewPID    bool
+	NewUTS    bool
+	NewUser   bool
+	NewCgroup bool
+	NewTime   bool
 	// Join existing namespaces instead of creating new ones.
 	// Paths to namespace fds, e.g. /proc/<pid>/ns/net.
-	JoinIPC  string
-	JoinMnt  string
-	JoinNet  string
-	JoinPID  string
-	JoinUTS  string
-	JoinUser string
+	JoinIPC    string
+	JoinMnt    string
+	JoinNet    string
+	JoinPID    string
+	JoinUTS    string
+	JoinUser   string
+	JoinCgroup string
+	JoinTime   string
 }
 
 func (n Namespaces) CloneFlags() uintptr {
@@ -44,6 +48,12 @@ func (n Namespaces) CloneFlags() uintptr {
 	if n.NewUser {
 		cf |= syscall.CLONE_NEWUSER
 	}
+	if n.NewCgroup {
+		cf |= unix.CLONE_NEWCGROUP
+	}
+	if n.NewTime {
+		cf |= unix.CLONE_NEWTIME
+	}
 	return cf
 }
 
@@ -55,6 +65,13 @@ type Mount struct {
 	Data   string
 }
 
+// Rlimit defines a POSIX resource limit.
+type Rlimit struct {
+	Type int    // unix.RLIMIT_NOFILE, unix.RLIMIT_NPROC, etc.
+	Soft uint64
+	Hard uint64
+}
+
 type Config struct {
 	Root        string
 	Namespaces  Namespaces
@@ -63,32 +80,34 @@ type Config struct {
 	UidMappings []syscall.SysProcIDMap
 	GidMappings []syscall.SysProcIDMap
 
-	// Security options (Phase 1)
-	// UsePivotRoot uses pivot_root instead of chroot for better isolation
-	UsePivotRoot bool
-	// Capabilities configures Linux capabilities for the container
-	Capabilities *Capabilities
-	// Seccomp configures the seccomp profile for syscall filtering
-	Seccomp *SeccompProfile
-	// Devices specifies device nodes to create in /dev
-	Devices []Device
-	// SetupDev creates a minimal /dev with standard devices
-	SetupDev bool
-	// NoNewPrivileges sets the no_new_privs flag
+	// Security
+	UsePivotRoot    bool
+	Capabilities    *Capabilities
+	Seccomp         *SeccompProfile
+	Devices         []Device
+	SetupDev        bool
 	NoNewPrivileges bool
+	MaskPaths       []string // Paths to mask with /dev/null or tmpfs
+	ReadonlyPaths   []string // Paths to remount read-only
 
-	// Resource limits (Phase 2)
-	// Resources configures cgroups v2 resource limits
+	// Resource limits
 	Resources *Resources
+	Rlimits   []Rlimit
 
-	// Lifecycle (Phase 4)
-	// Hooks configures lifecycle hooks
+	// Kernel parameters (written to /proc/sys)
+	Sysctl map[string]string
+
+	// Lifecycle
 	Hooks *Hooks
+
+	// Console/PTY
+	// ConsoleSocket is the path to a Unix socket where the container
+	// sends the master PTY fd. The parent receives it via ReceiveConsole().
+	// If empty, no PTY is allocated.
+	ConsoleSocket string
 }
 
 // DefaultConfig returns a Config with secure defaults.
-// When NewUser is enabled (the default), UID/GID mappings are set to map
-// the current user to root inside the container.
 func DefaultConfig() Config {
 	return Config{
 		Namespaces: Namespaces{
@@ -111,6 +130,36 @@ func DefaultConfig() Config {
 		Devices:         DefaultDevices(),
 		SetupDev:        true,
 		NoNewPrivileges: true,
+		MaskPaths:       DefaultMaskPaths(),
+		ReadonlyPaths:   DefaultReadonlyPaths(),
+	}
+}
+
+// DefaultMaskPaths returns paths that should be masked in containers.
+func DefaultMaskPaths() []string {
+	return []string{
+		"/proc/asound",
+		"/proc/acpi",
+		"/proc/kcore",
+		"/proc/keys",
+		"/proc/latency_stats",
+		"/proc/timer_list",
+		"/proc/timer_stats",
+		"/proc/sched_debug",
+		"/proc/scsi",
+		"/sys/firmware",
+		"/sys/devices/virtual/powercap",
+	}
+}
+
+// DefaultReadonlyPaths returns paths that should be read-only in containers.
+func DefaultReadonlyPaths() []string {
+	return []string{
+		"/proc/bus",
+		"/proc/fs",
+		"/proc/irq",
+		"/proc/sys",
+		"/proc/sysrq-trigger",
 	}
 }
 

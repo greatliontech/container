@@ -22,8 +22,9 @@ type seccompProfileJSON struct {
 
 // syscallGroupJSON is a JSON-friendly version of seccomp.SyscallGroup
 type syscallGroupJSON struct {
-	Action uint32   `json:"action"`
-	Names  []string `json:"names"`
+	Action        uint32                       `json:"action"`
+	Names         []string                     `json:"names,omitempty"`
+	NamesWithArgs []seccomp.NameWithConditions `json:"names_with_args,omitempty"`
 }
 
 // MarshalJSON implements json.Marshaler for SeccompProfile
@@ -34,8 +35,9 @@ func (p *SeccompProfile) MarshalJSON() ([]byte, error) {
 	}
 	for i, sg := range p.Syscalls {
 		jp.Syscalls[i] = syscallGroupJSON{
-			Action: uint32(sg.Action),
-			Names:  sg.Names,
+			Action:        uint32(sg.Action),
+			Names:         sg.Names,
+			NamesWithArgs: sg.NamesWithCondtions,
 		}
 	}
 	return json.Marshal(jp)
@@ -51,8 +53,9 @@ func (p *SeccompProfile) UnmarshalJSON(data []byte) error {
 	p.Syscalls = make([]seccomp.SyscallGroup, len(jp.Syscalls))
 	for i, sg := range jp.Syscalls {
 		p.Syscalls[i] = seccomp.SyscallGroup{
-			Action: seccomp.Action(sg.Action),
-			Names:  sg.Names,
+			Action:             seccomp.Action(sg.Action),
+			Names:              sg.Names,
+			NamesWithCondtions: sg.NamesWithArgs,
 		}
 	}
 	return nil

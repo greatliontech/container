@@ -149,6 +149,8 @@ func joinNamespacesPureGo(pidStr string) error {
 		{"ipc", unix.CLONE_NEWIPC},
 		{"net", unix.CLONE_NEWNET},
 		{"pid", unix.CLONE_NEWPID},
+		{"cgroup", unix.CLONE_NEWCGROUP},
+		{"time", unix.CLONE_NEWTIME},
 	}
 
 	for _, ns := range safeNs {

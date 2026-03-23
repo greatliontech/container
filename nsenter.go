@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -45,6 +46,14 @@ func nsenterCreateHandler() {
 	if data.Process == nil {
 		fmt.Fprintf(os.Stderr, "nsenter: no process in init data\n")
 		os.Exit(1)
+	}
+
+	// Console/PTY — allocate after pivot_root (uses container's /dev/pts).
+	if data.Config.ConsoleSocket != "" {
+		if err := setupConsole(data.Config.ConsoleSocket); err != nil {
+			fmt.Fprintf(os.Stderr, "nsenter: console setup: %v\n", err)
+			os.Exit(1)
+		}
 	}
 
 	p := data.Process
@@ -105,6 +114,13 @@ func nsenterSelfHandler() {
 
 // containerSetup applies container configuration after namespace setup.
 // This runs in the child process after namespaces have been created/joined.
+//
+// Order matters:
+//  1. Mounts and sysctl (need host /proc before pivot_root)
+//  2. pivot_root / chroot
+//  3. Masked and readonly paths (after pivot_root, paths are container-relative)
+//  4. Capabilities and rlimits
+//  5. Seccomp (last — may block capability/rlimit syscalls)
 func containerSetup(cfg *Config) error {
 	if err := unix.Mount("", "/", "", unix.MS_PRIVATE|unix.MS_REC, ""); err != nil {
 		return fmt.Errorf("mount private: %w", err)
@@ -120,6 +136,11 @@ func containerSetup(cfg *Config) error {
 		if err := syscall.Sethostname([]byte(cfg.Hostname)); err != nil {
 			return fmt.Errorf("sethostname: %w", err)
 		}
+	}
+
+	// Sysctl before pivot_root — needs host /proc/sys.
+	if err := applySysctl(cfg.Sysctl); err != nil {
+		return fmt.Errorf("sysctl: %w", err)
 	}
 
 	if cfg.SetupDev {
@@ -143,10 +164,22 @@ func containerSetup(cfg *Config) error {
 		}
 	}
 
+	// Masked and readonly paths after pivot_root (paths are now container-relative).
+	if err := applyMaskPaths(cfg.MaskPaths); err != nil {
+		return fmt.Errorf("mask paths: %w", err)
+	}
+	if err := applyReadonlyPaths(cfg.ReadonlyPaths); err != nil {
+		return fmt.Errorf("readonly paths: %w", err)
+	}
+
 	if cfg.Capabilities != nil {
 		if err := applyCapabilities(cfg.Capabilities); err != nil {
 			return fmt.Errorf("capabilities: %w", err)
 		}
+	}
+
+	if err := applyRlimits(cfg.Rlimits); err != nil {
+		return fmt.Errorf("rlimits: %w", err)
 	}
 
 	if cfg.NoNewPrivileges && cfg.Seccomp == nil {
@@ -161,6 +194,69 @@ func containerSetup(cfg *Config) error {
 		}
 	}
 
+	return nil
+}
+
+// applySysctl writes kernel parameters to /proc/sys.
+func applySysctl(params map[string]string) error {
+	for key, value := range params {
+		path := "/proc/sys/" + strings.ReplaceAll(key, ".", "/")
+		if err := os.WriteFile(path, []byte(value), 0644); err != nil {
+			return fmt.Errorf("%s: %w", key, err)
+		}
+	}
+	return nil
+}
+
+// applyRlimits sets POSIX resource limits.
+func applyRlimits(limits []Rlimit) error {
+	for _, rl := range limits {
+		if err := unix.Setrlimit(rl.Type, &unix.Rlimit{
+			Cur: rl.Soft,
+			Max: rl.Hard,
+		}); err != nil {
+			return fmt.Errorf("setrlimit type %d: %w", rl.Type, err)
+		}
+	}
+	return nil
+}
+
+// applyMaskPaths masks paths by bind-mounting /dev/null (files) or
+// a read-only tmpfs (directories) over them.
+func applyMaskPaths(paths []string) error {
+	for _, p := range paths {
+		fi, err := os.Stat(p)
+		if err != nil {
+			continue // Path doesn't exist, skip.
+		}
+		if fi.IsDir() {
+			if err := unix.Mount("tmpfs", p, "tmpfs", unix.MS_RDONLY, ""); err != nil {
+				continue // Best-effort.
+			}
+		} else {
+			if err := unix.Mount("/dev/null", p, "", unix.MS_BIND, ""); err != nil {
+				continue // Best-effort.
+			}
+		}
+	}
+	return nil
+}
+
+// applyReadonlyPaths remounts paths as read-only.
+func applyReadonlyPaths(paths []string) error {
+	for _, p := range paths {
+		if _, err := os.Stat(p); err != nil {
+			continue // Path doesn't exist, skip.
+		}
+		// Bind mount to self.
+		if err := unix.Mount(p, p, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
+			continue
+		}
+		// Remount as readonly.
+		if err := unix.Mount(p, p, "", unix.MS_BIND|unix.MS_REMOUNT|unix.MS_RDONLY|unix.MS_REC, ""); err != nil {
+			continue
+		}
+	}
 	return nil
 }
 

@@ -203,6 +203,8 @@ func buildJoinSpecs(ns *Namespaces) []nsJoinSpec {
 	add(syscall.CLONE_NEWIPC, ns.JoinIPC)
 	add(syscall.CLONE_NEWNET, ns.JoinNet)
 	add(syscall.CLONE_NEWPID, ns.JoinPID)
+	add(uint32(unix.CLONE_NEWCGROUP), ns.JoinCgroup)
+	add(uint32(unix.CLONE_NEWTIME), ns.JoinTime)
 	return specs
 }
 

@@ -11,6 +11,14 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
+/* Clone flags not always available in older headers. */
+#ifndef CLONE_NEWCGROUP
+#define CLONE_NEWCGROUP 0x02000000
+#endif
+#ifndef CLONE_NEWTIME
+#define CLONE_NEWTIME 0x00000080
+#endif
+
 /* Sync protocol messages — must match Go constants. */
 enum {
 	SYNC_USERMAP_REQ = 0x01,
@@ -179,12 +187,14 @@ static void do_join(void)
 		int flag;
 		int fd;
 	} ns[] = {
-		{ "user", CLONE_NEWUSER, -1 },
-		{ "mnt",  CLONE_NEWNS,   -1 },
-		{ "uts",  CLONE_NEWUTS,  -1 },
-		{ "ipc",  CLONE_NEWIPC,  -1 },
-		{ "net",  CLONE_NEWNET,  -1 },
-		{ "pid",  CLONE_NEWPID,  -1 },
+		{ "user",   CLONE_NEWUSER,   -1 },
+		{ "mnt",    CLONE_NEWNS,     -1 },
+		{ "uts",    CLONE_NEWUTS,    -1 },
+		{ "ipc",    CLONE_NEWIPC,    -1 },
+		{ "net",    CLONE_NEWNET,    -1 },
+		{ "pid",    CLONE_NEWPID,    -1 },
+		{ "cgroup", CLONE_NEWCGROUP, -1 },
+		{ "time",   CLONE_NEWTIME,   -1 },
 	};
 	int ns_count = (int)(sizeof(ns) / sizeof(ns[0]));
 
