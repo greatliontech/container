@@ -36,6 +36,7 @@ type Container struct {
 	exited       bool
 	cgroup       *Cgroup
 	readyW       *os.File // parent writes "go" here to unblock child exec
+	console      *os.File // master PTY fd (when Process.Terminal is true)
 	stdinPipe    io.WriteCloser
 	stdoutPipe   io.ReadCloser
 	stderrPipe   io.ReadCloser
@@ -249,6 +250,12 @@ func (c *Container) setupStdio(cmd *exec.Cmd, p *Process) error {
 	return nil
 }
 
+// Console returns the master PTY fd when the process was started with
+// Terminal: true. Returns nil if no terminal was requested.
+func (c *Container) Console() *os.File {
+	return c.console
+}
+
 func (c *Container) StdinPipe() (io.WriteCloser, error) {
 	if c.stdinPipe == nil {
 		return nil, syscall.EINVAL
@@ -309,6 +316,10 @@ func (c *Container) Destroy() error {
 	if c.readyW != nil {
 		c.readyW.Close()
 		c.readyW = nil
+	}
+	if c.console != nil {
+		c.console.Close()
+		c.console = nil
 	}
 
 	var errs []error

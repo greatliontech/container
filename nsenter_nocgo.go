@@ -44,8 +44,14 @@ func (c *Container) startChild(subcommand string, p *Process, extraArgs []string
 		fdOffset += 2
 	}
 
-	if p != nil && p.ConsoleSocket != nil {
-		extraFiles = append(extraFiles, p.ConsoleSocket)
+	var consoleParent *os.File
+	if p != nil && p.Terminal {
+		parent, child, err := newConsoleSocketPair()
+		if err != nil {
+			return 0, err
+		}
+		consoleParent = parent
+		extraFiles = append(extraFiles, child)
 		env = append(env, fmt.Sprintf("_CONTAINER_CONSOLEFD=%d", fdOffset))
 		fdOffset++
 	}
@@ -79,6 +85,15 @@ func (c *Container) startChild(subcommand string, p *Process, extraArgs []string
 		return 0, fmt.Errorf("write init data: %w", err)
 	}
 	initW.Close()
+
+	if consoleParent != nil {
+		master, err := receiveConsole(consoleParent)
+		consoleParent.Close()
+		if err != nil {
+			return 0, fmt.Errorf("receive console: %w", err)
+		}
+		c.console = master
+	}
 
 	return cmd.Process.Pid, nil
 }

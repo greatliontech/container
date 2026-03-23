@@ -137,8 +137,7 @@ func FromOCISpec(spec *specs.Spec) (*Config, *Process, error) {
 			cfg.OOMScoreAdj = p.OOMScoreAdj
 		}
 
-		// Console — if Terminal is true, caller must create a socketpair
-		// via NewConsoleSocketPair() and set proc.ConsoleSocket = child end.
+		// Console.
 		proc.Terminal = p.Terminal
 		if p.ConsoleSize != nil {
 			proc.ConsoleHeight = p.ConsoleSize.Height

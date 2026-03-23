@@ -8,21 +8,31 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// NewConsoleSocketPair creates a socketpair for console fd passing.
-// The caller keeps `parent` and passes `child` to Process.ConsoleSocket.
-// After the container starts, call ReceiveConsole(parent) to get the master PTY fd.
-func NewConsoleSocketPair() (parent *os.File, child *os.File, err error) {
+// newConsoleSocketPair creates a socketpair for internal console fd passing.
+// Returns (parent, child) — parent receives master PTY fd, child is passed
+// to the container process via ExtraFiles.
+func newConsoleSocketPair() (parent *os.File, child *os.File, err error) {
 	fds, err := syscall.Socketpair(syscall.AF_LOCAL, syscall.SOCK_STREAM|syscall.SOCK_CLOEXEC, 0)
 	if err != nil {
-		return nil, nil, fmt.Errorf("socketpair: %w", err)
+		return nil, nil, fmt.Errorf("console socketpair: %w", err)
 	}
-	return os.NewFile(uintptr(fds[0]), "console-parent"),
-		os.NewFile(uintptr(fds[1]), "console-child"), nil
+
+	parent = os.NewFile(uintptr(fds[0]), "console-parent")
+	child = os.NewFile(uintptr(fds[1]), "console-child")
+
+	// Clear CLOEXEC on child so it's inherited.
+	if _, _, errno := syscall.RawSyscall(syscall.SYS_FCNTL, uintptr(fds[1]), syscall.F_SETFD, 0); errno != 0 {
+		parent.Close()
+		child.Close()
+		return nil, nil, fmt.Errorf("fcntl console child: %w", errno)
+	}
+
+	return parent, child, nil
 }
 
-// ReceiveConsole receives the master PTY fd from the container child
-// over a console socketpair. Pass the parent end from NewConsoleSocketPair().
-func ReceiveConsole(sock *os.File) (*os.File, error) {
+// receiveConsole receives the master PTY fd from the container child
+// over the parent end of the console socketpair.
+func receiveConsole(sock *os.File) (*os.File, error) {
 	buf := make([]byte, 1)
 	oob := make([]byte, unix.CmsgSpace(4))
 
@@ -52,10 +62,8 @@ func ReceiveConsole(sock *os.File) (*os.File, error) {
 // setupConsole allocates a PTY inside the container, sends the master fd
 // to the parent via the console socket fd, and dups the slave to stdio.
 //
-// This must be called after pivot_root (so /dev/pts is the container's)
-// and before exec.
+// Called in the child process after pivot_root and before exec.
 func setupConsole(socketFd int, height, width uint) error {
-	// Open PTY master.
 	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
 	if err != nil {
 		return fmt.Errorf("open /dev/ptmx: %w", err)
@@ -78,7 +86,6 @@ func setupConsole(socketFd int, height, width uint) error {
 		return fmt.Errorf("open slave %s: %w", slavePath, err)
 	}
 
-	// Set terminal size.
 	if height > 0 || width > 0 {
 		ws := unix.Winsize{Row: uint16(height), Col: uint16(width)}
 		_ = unix.IoctlSetWinsize(int(slave.Fd()), unix.TIOCSWINSZ, &ws)
