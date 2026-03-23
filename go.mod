@@ -5,6 +5,7 @@ go 1.25
 require (
 	github.com/elastic/go-seccomp-bpf v1.6.0
 	github.com/greatliontech/ocifs v0.0.0-20240626155415-aafbd4a35bf2
+	github.com/opencontainers/runtime-spec v1.3.0
 	golang.org/x/sys v0.40.0
 	kernel.org/pub/linux/libs/security/libcap/cap v1.2.77
 )
