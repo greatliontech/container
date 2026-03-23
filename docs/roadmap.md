@@ -144,7 +144,7 @@ The runtime currently implements:
 
 ### 4.2 Signal Handling
 
-- [x] Forward signals to container init process
+- [x] Signal() method for sending signals to container process
 - [x] Graceful shutdown with SIGTERM → SIGKILL escalation
 - [x] Configurable stop timeout
 

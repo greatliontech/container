@@ -337,42 +337,6 @@ func TestSignalConfigStruct(t *testing.T) {
 	}
 }
 
-func TestNewSignalForwarder(t *testing.T) {
-	signals := []syscall.Signal{syscall.SIGTERM, syscall.SIGINT}
-	sf := NewSignalForwarder(12345, signals)
-
-	if sf == nil {
-		t.Fatal("NewSignalForwarder returned nil")
-	}
-	if sf.pid != 12345 {
-		t.Errorf("pid = %d, want 12345", sf.pid)
-	}
-	if len(sf.signals) != 2 {
-		t.Errorf("signals length = %d, want 2", len(sf.signals))
-	}
-}
-
-func TestSignalForwarder_StartStop(t *testing.T) {
-	sf := NewSignalForwarder(os.Getpid(), []syscall.Signal{syscall.SIGUSR1})
-
-	// Start should not panic
-	sf.Start()
-
-	// Stop should not panic and should complete
-	done := make(chan struct{})
-	go func() {
-		sf.Stop()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		// OK
-	case <-time.After(time.Second):
-		t.Error("Stop() timed out")
-	}
-}
-
 func TestRunHooks_WithTrueCommand(t *testing.T) {
 	// Skip if /bin/true doesn't exist
 	if _, err := os.Stat("/bin/true"); err != nil {

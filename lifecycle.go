@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sync"
 	"syscall"
 	"time"
 )
@@ -165,46 +164,6 @@ func DefaultSignalConfig() SignalConfig {
 			syscall.SIGUSR2,
 		},
 	}
-}
-
-// SignalForwarder forwards signals to a process
-type SignalForwarder struct {
-	pid     int
-	signals []syscall.Signal
-	done    chan struct{}
-	wg      sync.WaitGroup
-}
-
-// NewSignalForwarder creates a new signal forwarder
-func NewSignalForwarder(pid int, signals []syscall.Signal) *SignalForwarder {
-	return &SignalForwarder{
-		pid:     pid,
-		signals: signals,
-		done:    make(chan struct{}),
-	}
-}
-
-// Start begins forwarding signals
-func (sf *SignalForwarder) Start() {
-	// Note: Full signal forwarding requires os/signal.Notify
-	// This is a simplified version - in production you'd use
-	// signal.Notify to catch signals and forward them
-	sf.wg.Add(1)
-	go func() {
-		defer sf.wg.Done()
-		<-sf.done
-	}()
-}
-
-// Stop stops forwarding signals
-func (sf *SignalForwarder) Stop() {
-	close(sf.done)
-	sf.wg.Wait()
-}
-
-// ForwardSignal sends a signal to the process
-func (sf *SignalForwarder) ForwardSignal(sig syscall.Signal) error {
-	return syscall.Kill(sf.pid, sig)
 }
 
 // StateManager manages container state persistence
