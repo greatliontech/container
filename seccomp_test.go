@@ -1,6 +1,7 @@
 package container
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/elastic/go-seccomp-bpf"
@@ -252,6 +253,35 @@ func TestSeccompActions(t *testing.T) {
 			t.Errorf("duplicate action value: %v", action)
 		}
 		seen[action] = true
+	}
+}
+
+func TestSeccompProfile_MarshalUnmarshalJSON(t *testing.T) {
+	original := DefaultSeccompProfile()
+
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	var restored SeccompProfile
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	if restored.DefaultAction != original.DefaultAction {
+		t.Errorf("DefaultAction = %v, want %v", restored.DefaultAction, original.DefaultAction)
+	}
+	if len(restored.Syscalls) != len(original.Syscalls) {
+		t.Fatalf("Syscalls length = %d, want %d", len(restored.Syscalls), len(original.Syscalls))
+	}
+	for i := range original.Syscalls {
+		if restored.Syscalls[i].Action != original.Syscalls[i].Action {
+			t.Errorf("Syscalls[%d].Action = %v, want %v", i, restored.Syscalls[i].Action, original.Syscalls[i].Action)
+		}
+		if len(restored.Syscalls[i].Names) != len(original.Syscalls[i].Names) {
+			t.Errorf("Syscalls[%d].Names length = %d, want %d", i, len(restored.Syscalls[i].Names), len(original.Syscalls[i].Names))
+		}
 	}
 }
 

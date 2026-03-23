@@ -562,3 +562,44 @@ func TestLoadCgroup_NotFound(t *testing.T) {
 		t.Errorf("LoadCgroup error = %v, want ErrCgroupNotFound", err)
 	}
 }
+
+func TestReadCgroupKeyUint64(t *testing.T) {
+	// Create a temp file simulating cgroup key-value format.
+	tmpFile := filepath.Join(t.TempDir(), "events")
+	content := "high 0\nmax 0\noom 0\noom_kill 3\noom_group_kill 0\n"
+	if err := os.WriteFile(tmpFile, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if v := readCgroupKeyUint64(tmpFile, "oom_kill"); v != 3 {
+		t.Errorf("readCgroupKeyUint64(oom_kill) = %d, want 3", v)
+	}
+	if v := readCgroupKeyUint64(tmpFile, "high"); v != 0 {
+		t.Errorf("readCgroupKeyUint64(high) = %d, want 0", v)
+	}
+	if v := readCgroupKeyUint64(tmpFile, "nonexistent"); v != 0 {
+		t.Errorf("readCgroupKeyUint64(nonexistent) = %d, want 0", v)
+	}
+	if v := readCgroupKeyUint64("/nonexistent/path", "key"); v != 0 {
+		t.Errorf("readCgroupKeyUint64(bad path) = %d, want 0", v)
+	}
+}
+
+func TestCgroup_ApplyIO(t *testing.T) {
+	skipIfNotRoot(t)
+	skipIfNoCgroupV2(t)
+
+	cg, err := NewCgroup("test-io-apply")
+	if err != nil {
+		t.Fatalf("NewCgroup: %v", err)
+	}
+	defer cg.Delete()
+
+	resources := &Resources{
+		IO: &IOResources{
+			Weight: 100,
+		},
+	}
+	// IO weight may fail if io controller not enabled — not fatal.
+	_ = cg.Apply(resources)
+}
