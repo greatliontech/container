@@ -188,15 +188,24 @@ func (c *Container) startChildCGO(subcommand string, p *Process, extraArgs []str
 	)
 
 	if err := c.setupStdio(cmd, p); err != nil {
+		configR.Close()
+		configW.Close()
+		initR.Close()
+		initW.Close()
+		syncParent.Close()
+		syncChild.Close()
 		return 0, err
 	}
 
 	c.cmd = cmd
 
 	if err := cmd.Start(); err != nil {
-		syncParent.Close()
+		configR.Close()
 		configW.Close()
+		initR.Close()
 		initW.Close()
+		syncParent.Close()
+		syncChild.Close()
 		return 0, fmt.Errorf("start child: %w", err)
 	}
 

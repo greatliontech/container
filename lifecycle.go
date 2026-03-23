@@ -87,7 +87,7 @@ func runHook(hook Hook, state *ContainerState) error {
 
 	if _, err := stdin.Write(stateJSON); err != nil {
 		stdin.Close()
-		cmd.Wait()
+		_ = cmd.Wait() // reap process; error is irrelevant since write already failed
 		return fmt.Errorf("write hook state: %w", err)
 	}
 	stdin.Close()
