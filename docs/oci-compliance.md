@@ -24,22 +24,21 @@ Status key:
 
 ## Process
 
-- [ ] Terminal — not wired (ConsoleSocket exists but converter doesn't set it)
-- [ ] ConsoleSize (Box.Height, Box.Width) — no resize support
-- [ ] User.UID — not mapped to Process.Credential
-- [ ] User.GID — not mapped to Process.Credential
-- [ ] User.Umask — not supported
-- [ ] User.AdditionalGids — not mapped
-- [ ] User.Username — not supported
+- [x] Terminal — ConsoleSocket + ConsoleHeight/ConsoleWidth on Config, caller provides socket path
+- [x] ConsoleSize — mapped to Config.ConsoleHeight/ConsoleWidth, TIOCSWINSZ ioctl on slave PTY
+- [x] User.UID — mapped to Process.Credential.Uid
+- [x] User.GID — mapped to Process.Credential.Gid
+- [x] User.AdditionalGids — mapped to Process.Credential.Groups
+- [x] User.Umask — mapped to Process.Umask, applied via syscall.Umask in child
+- [ ] User.Username — requires container /etc/passwd parsing
 - [x] Args — mapped to Process.Cmd + Process.Args
-- [ ] CommandLine — Windows-only, not applicable
 - [x] Env — mapped to Process.Env
 - [x] Cwd — mapped to Process.WorkDir
 - [x] Capabilities — all 5 sets converted via cap.FromName
 - [x] Rlimits — type string parsed, mapped to Config.Rlimits
 - [x] NoNewPrivileges — mapped to Config.NoNewPrivileges
+- [x] OOMScoreAdj — mapped to Config.OOMScoreAdj, written to /proc/self/oom_score_adj
 - [ ] ApparmorProfile — not supported
-- [ ] OOMScoreAdj — no field in Config
 - [ ] Scheduler — not supported
 - [ ] SelinuxLabel — not supported
 - [ ] IOPriority — not supported

@@ -50,7 +50,7 @@ func nsenterCreateHandler() {
 
 	// Console/PTY — allocate after pivot_root (uses container's /dev/pts).
 	if data.Config.ConsoleSocket != "" {
-		if err := setupConsole(data.Config.ConsoleSocket); err != nil {
+		if err := setupConsole(data.Config.ConsoleSocket, data.Config.ConsoleHeight, data.Config.ConsoleWidth); err != nil {
 			fmt.Fprintf(os.Stderr, "nsenter: console setup: %v\n", err)
 			os.Exit(1)
 		}
@@ -75,6 +75,10 @@ func nsenterCreateHandler() {
 	}
 
 	p := data.Process
+
+	if p.Umask != nil {
+		syscall.Umask(int(*p.Umask))
+	}
 
 	if p.WorkDir != "" {
 		if err := syscall.Chdir(p.WorkDir); err != nil {
@@ -140,6 +144,14 @@ func nsenterSelfHandler() {
 //  4. Capabilities and rlimits
 //  5. Seccomp (last — may block capability/rlimit syscalls)
 func containerSetup(cfg *Config) error {
+	// OOM score adjustment — must happen before capabilities are dropped
+	// and before PR_SET_DUMPABLE is cleared.
+	if cfg.OOMScoreAdj != nil {
+		if err := os.WriteFile("/proc/self/oom_score_adj", []byte(fmt.Sprintf("%d", *cfg.OOMScoreAdj)), 0644); err != nil {
+			return fmt.Errorf("oom_score_adj: %w", err)
+		}
+	}
+
 	if err := unix.Mount("", "/", "", unix.MS_PRIVATE|unix.MS_REC, ""); err != nil {
 		return fmt.Errorf("mount private: %w", err)
 	}

@@ -194,6 +194,65 @@ func TestFromOCISpec_Annotations(t *testing.T) {
 	}
 }
 
+func TestFromOCISpec_User(t *testing.T) {
+	spec := &specs.Spec{
+		Root: &specs.Root{Path: "/rootfs"},
+		Process: &specs.Process{
+			Args: []string{"/bin/sh"},
+			Cwd:  "/",
+			User: specs.User{
+				UID:            1000,
+				GID:            1000,
+				AdditionalGids: []uint32{100, 200},
+				Umask:          uint32Ptr(0022),
+			},
+		},
+	}
+
+	cfg, proc, err := FromOCISpec(spec)
+	if err != nil {
+		t.Fatalf("FromOCISpec: %v", err)
+	}
+	_ = cfg
+
+	if proc.Credential == nil {
+		t.Fatal("Credential should be set")
+	}
+	if proc.Credential.Uid != 1000 {
+		t.Errorf("Credential.Uid = %d, want 1000", proc.Credential.Uid)
+	}
+	if proc.Credential.Gid != 1000 {
+		t.Errorf("Credential.Gid = %d, want 1000", proc.Credential.Gid)
+	}
+	if len(proc.Credential.Groups) != 2 {
+		t.Errorf("Credential.Groups = %v, want [100 200]", proc.Credential.Groups)
+	}
+	if proc.Umask == nil || *proc.Umask != 0022 {
+		t.Errorf("Umask = %v, want 0022", proc.Umask)
+	}
+}
+
+func TestFromOCISpec_OOMScoreAdj(t *testing.T) {
+	adj := 500
+	spec := &specs.Spec{
+		Root: &specs.Root{Path: "/rootfs"},
+		Process: &specs.Process{
+			Args:        []string{"/bin/sh"},
+			Cwd:         "/",
+			OOMScoreAdj: &adj,
+		},
+	}
+
+	cfg, _, err := FromOCISpec(spec)
+	if err != nil {
+		t.Fatalf("FromOCISpec: %v", err)
+	}
+
+	if cfg.OOMScoreAdj == nil || *cfg.OOMScoreAdj != 500 {
+		t.Errorf("OOMScoreAdj = %v, want 500", cfg.OOMScoreAdj)
+	}
+}
+
 func TestFromOCISpec_NamespaceJoin(t *testing.T) {
 	spec := &specs.Spec{
 		Root: &specs.Root{Path: "/rootfs"},
@@ -275,4 +334,5 @@ func TestLoadOCIBundle(t *testing.T) {
 	}
 }
 
-func int64Ptr(v int64) *int64 { return &v }
+func int64Ptr(v int64) *int64    { return &v }
+func uint32Ptr(v uint32) *uint32 { return &v }

@@ -105,11 +105,16 @@ type Config struct {
 	// Metadata
 	Annotations map[string]string
 
+	// OOM
+	OOMScoreAdj *int
+
 	// Console/PTY
 	// ConsoleSocket is the path to a Unix socket where the container
 	// sends the master PTY fd. The parent receives it via ReceiveConsole().
 	// If empty, no PTY is allocated.
 	ConsoleSocket string
+	ConsoleHeight uint
+	ConsoleWidth  uint
 }
 
 // DefaultConfig returns a Config with secure defaults.

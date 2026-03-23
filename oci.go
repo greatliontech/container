@@ -121,7 +121,30 @@ func FromOCISpec(spec *specs.Spec) (*Config, *Process, error) {
 		proc.Env = p.Env
 		proc.WorkDir = p.Cwd
 		cfg.NoNewPrivileges = p.NoNewPrivileges
-		cfg.ConsoleSocket = "" // Set by caller if terminal is needed.
+
+		// User credentials.
+		proc.Credential = &syscall.Credential{
+			Uid:    p.User.UID,
+			Gid:    p.User.GID,
+			Groups: p.User.AdditionalGids,
+		}
+		if p.User.Umask != nil {
+			proc.Umask = p.User.Umask
+		}
+
+		// OOM score.
+		if p.OOMScoreAdj != nil {
+			cfg.OOMScoreAdj = p.OOMScoreAdj
+		}
+
+		// Console — Terminal flag is stored; caller must set ConsoleSocket path.
+		if p.Terminal {
+			// ConsoleSocket must be provided by the caller via cfg.ConsoleSocket.
+			if p.ConsoleSize != nil {
+				cfg.ConsoleHeight = p.ConsoleSize.Height
+				cfg.ConsoleWidth = p.ConsoleSize.Width
+			}
+		}
 
 		// Capabilities.
 		if p.Capabilities != nil {

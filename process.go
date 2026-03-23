@@ -13,6 +13,7 @@ type Process struct {
 	InheritEnv bool
 	Init       bool
 	Credential *syscall.Credential
+	Umask      *uint32
 	Stdin      io.Reader `json:"-"`
 	Stdout     io.Writer `json:"-"`
 	Stderr     io.Writer `json:"-"`

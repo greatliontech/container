@@ -10,10 +10,11 @@ import (
 
 // setupConsole allocates a PTY inside the container, sends the master fd
 // to the parent via the console socket, and dups the slave to stdio.
+// If height/width are non-zero, the terminal size is set.
 //
 // This must be called after pivot_root (so /dev/pts is the container's)
 // and before exec.
-func setupConsole(socketPath string) error {
+func setupConsole(socketPath string, height, width uint) error {
 	// Open PTY master.
 	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
 	if err != nil {
@@ -38,6 +39,12 @@ func setupConsole(socketPath string) error {
 	if err != nil {
 		master.Close()
 		return fmt.Errorf("open slave %s: %w", slavePath, err)
+	}
+
+	// Set terminal size if specified.
+	if height > 0 || width > 0 {
+		ws := unix.Winsize{Row: uint16(height), Col: uint16(width)}
+		_ = unix.IoctlSetWinsize(int(slave.Fd()), unix.TIOCSWINSZ, &ws)
 	}
 
 	// Send master fd to parent via console socket.
