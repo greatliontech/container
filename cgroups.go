@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -430,6 +433,93 @@ func (c *Cgroup) readUint64(name string) (uint64, error) {
 		return 0, err
 	}
 	return strconv.ParseUint(strings.TrimSpace(string(data)), 10, 64)
+}
+
+// NotifyOOM returns a channel that receives a value when an OOM kill occurs
+// in this cgroup. The channel is closed when the cgroup becomes empty
+// (all processes exited) without OOM, or on error.
+//
+// Uses inotify to watch memory.events and cgroup.events (cgroups v2).
+func (c *Cgroup) NotifyOOM() (<-chan struct{}, error) {
+	fd, err := unix.InotifyInit()
+	if err != nil {
+		return nil, fmt.Errorf("inotify init: %w", err)
+	}
+
+	memEventsPath := filepath.Join(c.path, "memory.events")
+	memWd, err := unix.InotifyAddWatch(fd, memEventsPath, unix.IN_MODIFY)
+	if err != nil {
+		unix.Close(fd)
+		return nil, fmt.Errorf("inotify watch memory.events: %w", err)
+	}
+
+	cgEventsPath := filepath.Join(c.path, "cgroup.events")
+	cgWd, err := unix.InotifyAddWatch(fd, cgEventsPath, unix.IN_MODIFY)
+	if err != nil {
+		unix.Close(fd)
+		return nil, fmt.Errorf("inotify watch cgroup.events: %w", err)
+	}
+
+	ch := make(chan struct{})
+	go func() {
+		var buf [unix.SizeofInotifyEvent + unix.PathMax + 1]byte
+		defer func() {
+			unix.Close(fd)
+			close(ch)
+		}()
+
+		for {
+			n, err := unix.Read(fd, buf[:])
+			if err == unix.EINTR {
+				continue
+			}
+			if err != nil {
+				return
+			}
+			if n < unix.SizeofInotifyEvent {
+				return
+			}
+
+			var offset uint32
+			for offset <= uint32(n-unix.SizeofInotifyEvent) {
+				raw := (*unix.InotifyEvent)(unsafe.Pointer(&buf[offset]))
+				offset += unix.SizeofInotifyEvent + raw.Len
+
+				if raw.Mask&unix.IN_MODIFY == 0 {
+					continue
+				}
+
+				switch int(raw.Wd) {
+				case memWd:
+					if readCgroupKeyUint64(memEventsPath, "oom_kill") > 0 {
+						ch <- struct{}{}
+					}
+				case cgWd:
+					if readCgroupKeyUint64(cgEventsPath, "populated") == 0 {
+						return
+					}
+				}
+			}
+		}
+	}()
+	return ch, nil
+}
+
+// readCgroupKeyUint64 reads a key-value pair from a cgroup file.
+// Returns 0 on any error.
+func readCgroupKeyUint64(path, key string) uint64 {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		parts := strings.Fields(line)
+		if len(parts) == 2 && parts[0] == key {
+			val, _ := strconv.ParseUint(parts[1], 10, 64)
+			return val
+		}
+	}
+	return 0
 }
 
 // DefaultResources returns a reasonable default resource configuration

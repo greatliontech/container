@@ -81,7 +81,7 @@ The runtime currently implements:
 - [x] `memory.max` - hard memory limit
 - [x] `memory.high` - memory throttling threshold
 - [x] `memory.swap.max` - swap limit
-- [ ] OOM handling and notifications
+- [x] OOM kill notification via inotify on memory.events
 
 ### 2.3 CPU Limits
 
