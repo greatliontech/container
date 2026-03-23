@@ -41,6 +41,13 @@ func (c *Container) startChild(subcommand string, p *Process, extraArgs []string
 			fmt.Sprintf("_CONTAINER_STATUSFD=%d", fdOffset+0),
 			fmt.Sprintf("_CONTAINER_READYFD=%d", fdOffset+1),
 		)
+		fdOffset += 2
+	}
+
+	if p != nil && p.ConsoleSocket != nil {
+		extraFiles = append(extraFiles, p.ConsoleSocket)
+		env = append(env, fmt.Sprintf("_CONTAINER_CONSOLEFD=%d", fdOffset))
+		fdOffset++
 	}
 
 	cmd.ExtraFiles = extraFiles

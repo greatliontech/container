@@ -49,8 +49,14 @@ func nsenterCreateHandler() {
 	}
 
 	// Console/PTY — allocate after pivot_root (uses container's /dev/pts).
-	if data.Config.ConsoleSocket != "" {
-		if err := setupConsole(data.Config.ConsoleSocket, data.Config.ConsoleHeight, data.Config.ConsoleWidth); err != nil {
+	// Console socket fd is passed via _CONTAINER_CONSOLEFD env var.
+	if consoleFdStr := os.Getenv("_CONTAINER_CONSOLEFD"); consoleFdStr != "" {
+		consoleFd := getenvFd("_CONTAINER_CONSOLEFD")
+		var h, w uint
+		if data.Process != nil {
+			h, w = data.Process.ConsoleHeight, data.Process.ConsoleWidth
+		}
+		if err := setupConsole(consoleFd, h, w); err != nil {
 			fmt.Fprintf(os.Stderr, "nsenter: console setup: %v\n", err)
 			os.Exit(1)
 		}
