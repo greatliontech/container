@@ -903,6 +903,9 @@ func TestIntegration_ExecWithNsenter(t *testing.T) {
 	t.Log("TestIntegration_ExecWithNsenter: execing into container...")
 	cmd, err := c.Exec(execCfg)
 	if err != nil {
+		if strings.Contains(err.Error(), "without CGO") {
+			t.Skip("exec requires CGO for mount namespace joining")
+		}
 		t.Fatalf("Exec failed: %v", err)
 	}
 
@@ -996,6 +999,9 @@ func TestIntegration_ExecWithNsenter_UserNs(t *testing.T) {
 	t.Log("TestIntegration_ExecWithNsenter_UserNs: execing into container...")
 	cmd, err := c.Exec(execCfg)
 	if err != nil {
+		if strings.Contains(err.Error(), "without CGO") {
+			t.Skip("exec requires CGO for user/mount namespace joining")
+		}
 		t.Fatalf("Exec failed: %v", err)
 	}
 
