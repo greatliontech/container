@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestInContainer(t *testing.T) {
@@ -48,5 +50,54 @@ func TestGetNamespacePaths(t *testing.T) {
 		if _, ok := paths[ns]; !ok {
 			t.Errorf("GetNamespacePaths missing %q", ns)
 		}
+	}
+}
+
+func TestApplyRlimits(t *testing.T) {
+	// Get current RLIMIT_NOFILE.
+	var orig unix.Rlimit
+	if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &orig); err != nil {
+		t.Fatal(err)
+	}
+
+	// Set a lower soft limit (within current hard limit).
+	newSoft := orig.Cur / 2
+	if newSoft == 0 {
+		newSoft = 64
+	}
+	limits := []Rlimit{
+		{Type: unix.RLIMIT_NOFILE, Soft: newSoft, Hard: orig.Max},
+	}
+
+	if err := applyRlimits(limits); err != nil {
+		t.Fatalf("applyRlimits: %v", err)
+	}
+
+	// Verify it was applied.
+	var after unix.Rlimit
+	if err := unix.Getrlimit(unix.RLIMIT_NOFILE, &after); err != nil {
+		t.Fatal(err)
+	}
+	if after.Cur != newSoft {
+		t.Errorf("RLIMIT_NOFILE soft = %d, want %d", after.Cur, newSoft)
+	}
+
+	// Restore.
+	_ = unix.Setrlimit(unix.RLIMIT_NOFILE, &orig)
+}
+
+func TestApplyMaskPaths_NonexistentPaths(t *testing.T) {
+	// Masking non-existent paths should silently skip them.
+	err := applyMaskPaths([]string{"/nonexistent/path/1", "/nonexistent/path/2"})
+	if err != nil {
+		t.Errorf("applyMaskPaths with non-existent paths: %v", err)
+	}
+}
+
+func TestApplyReadonlyPaths_NonexistentPaths(t *testing.T) {
+	// Readonly on non-existent paths should silently skip them.
+	err := applyReadonlyPaths([]string{"/nonexistent/path/1", "/nonexistent/path/2"})
+	if err != nil {
+		t.Errorf("applyReadonlyPaths with non-existent paths: %v", err)
 	}
 }

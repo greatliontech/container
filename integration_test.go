@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // Comprehensive integration tests for container scenarios (require root)
@@ -623,6 +625,136 @@ func TestIntegration_MultipleNamespaceIsolation(t *testing.T) {
 		t.Error("UTS namespace isolation not working (hostname)")
 	}
 	t.Log("TestIntegration_MultipleNamespaceIsolation: done")
+}
+
+func TestIntegration_MaskedPaths(t *testing.T) {
+	skipIfNotRoot(t)
+
+	rootfs := createTestRootfs(t)
+	containerID := generateTestID(t)
+
+	cfg := Config{
+		Root: rootfs,
+		Namespaces: Namespaces{
+			NewIPC: true,
+			NewMnt: true,
+			NewPID: true,
+			NewUTS: true,
+		},
+		UsePivotRoot: true,
+		SetupDev:     true,
+		MaskPaths:    []string{"/proc/kcore"},
+	}
+
+	c := New(containerID, cfg)
+	defer c.Destroy()
+
+	// Try to read /proc/kcore — should be masked (empty/devnull).
+	var stdout, stderr bytes.Buffer
+	proc := &Process{
+		Cmd:    "/bin/sh",
+		Args:   []string{"-c", "if cat /proc/kcore 2>/dev/null | head -c 1 | test -z \"$(cat)\"; then echo masked; else echo readable; fi"},
+		Stdout: &stdout,
+		Stderr: &stderr,
+	}
+
+	if err := c.Run(proc); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	c.Wait()
+
+	output := strings.TrimSpace(stdout.String())
+	if output != "masked" {
+		t.Logf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+		t.Errorf("/proc/kcore should be masked, got %q", output)
+	}
+}
+
+func TestIntegration_ReadonlyPaths(t *testing.T) {
+	skipIfNotRoot(t)
+
+	rootfs := createTestRootfs(t)
+	containerID := generateTestID(t)
+
+	cfg := Config{
+		Root: rootfs,
+		Namespaces: Namespaces{
+			NewIPC: true,
+			NewMnt: true,
+			NewPID: true,
+			NewUTS: true,
+		},
+		UsePivotRoot:  true,
+		SetupDev:      true,
+		ReadonlyPaths: []string{"/proc/sys"},
+	}
+
+	c := New(containerID, cfg)
+	defer c.Destroy()
+
+	// Try to write to a readonly path — should fail.
+	var stdout, stderr bytes.Buffer
+	proc := &Process{
+		Cmd:    "/bin/sh",
+		Args:   []string{"-c", "echo test > /proc/sys/kernel/hostname 2>&1; echo $?"},
+		Stdout: &stdout,
+		Stderr: &stderr,
+	}
+
+	if err := c.Run(proc); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	c.Wait()
+
+	output := strings.TrimSpace(stdout.String())
+	// Write should fail — exit code should be non-zero.
+	if !strings.Contains(output, "1") && !strings.Contains(output, "Read-only") {
+		t.Logf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+		t.Errorf("/proc/sys should be readonly, got output: %q", output)
+	}
+}
+
+func TestIntegration_Rlimits(t *testing.T) {
+	skipIfNotRoot(t)
+
+	rootfs := createTestRootfs(t)
+	containerID := generateTestID(t)
+
+	cfg := Config{
+		Root: rootfs,
+		Namespaces: Namespaces{
+			NewIPC: true,
+			NewMnt: true,
+			NewPID: true,
+			NewUTS: true,
+		},
+		UsePivotRoot: true,
+		SetupDev:     true,
+		Rlimits: []Rlimit{
+			{Type: unix.RLIMIT_NOFILE, Soft: 256, Hard: 256},
+		},
+	}
+
+	c := New(containerID, cfg)
+	defer c.Destroy()
+
+	// Check ulimit inside container.
+	var stdout bytes.Buffer
+	proc := &Process{
+		Cmd:    "/bin/sh",
+		Args:   []string{"-c", "ulimit -n"},
+		Stdout: &stdout,
+	}
+
+	if err := c.Run(proc); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	c.Wait()
+
+	output := strings.TrimSpace(stdout.String())
+	if output != "256" {
+		t.Errorf("ulimit -n = %q, want 256", output)
+	}
 }
 
 func TestIntegration_ExecWithNsenter(t *testing.T) {

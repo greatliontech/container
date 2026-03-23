@@ -221,6 +221,75 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Hooks != nil {
 		t.Error("DefaultConfig should not set Hooks")
 	}
+
+	// Verify default masked/readonly paths are set.
+	if len(cfg.MaskPaths) == 0 {
+		t.Error("DefaultConfig should set MaskPaths")
+	}
+	if len(cfg.ReadonlyPaths) == 0 {
+		t.Error("DefaultConfig should set ReadonlyPaths")
+	}
+}
+
+func TestNamespaces_CloneFlags_CgroupAndTime(t *testing.T) {
+	ns := Namespaces{NewCgroup: true, NewTime: true}
+	flags := ns.CloneFlags()
+
+	if flags&unix.CLONE_NEWCGROUP == 0 {
+		t.Error("CloneFlags should include CLONE_NEWCGROUP")
+	}
+	if flags&unix.CLONE_NEWTIME == 0 {
+		t.Error("CloneFlags should include CLONE_NEWTIME")
+	}
+}
+
+func TestDefaultMaskPaths(t *testing.T) {
+	paths := DefaultMaskPaths()
+	if len(paths) == 0 {
+		t.Fatal("DefaultMaskPaths should not be empty")
+	}
+	// Should include /proc/kcore.
+	found := false
+	for _, p := range paths {
+		if p == "/proc/kcore" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("DefaultMaskPaths should include /proc/kcore")
+	}
+}
+
+func TestDefaultReadonlyPaths(t *testing.T) {
+	paths := DefaultReadonlyPaths()
+	if len(paths) == 0 {
+		t.Fatal("DefaultReadonlyPaths should not be empty")
+	}
+	// Should include /proc/sys.
+	found := false
+	for _, p := range paths {
+		if p == "/proc/sys" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("DefaultReadonlyPaths should include /proc/sys")
+	}
+}
+
+func TestRlimitStruct(t *testing.T) {
+	rl := Rlimit{Type: unix.RLIMIT_NOFILE, Soft: 1024, Hard: 4096}
+	if rl.Type != unix.RLIMIT_NOFILE {
+		t.Errorf("Rlimit.Type = %d, want RLIMIT_NOFILE", rl.Type)
+	}
+	if rl.Soft != 1024 {
+		t.Errorf("Rlimit.Soft = %d, want 1024", rl.Soft)
+	}
+	if rl.Hard != 4096 {
+		t.Errorf("Rlimit.Hard = %d, want 4096", rl.Hard)
+	}
 }
 
 func TestMountFlags(t *testing.T) {
