@@ -3,7 +3,6 @@
 package container
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,10 +14,6 @@ import (
 )
 
 // startChild launches the child using SysProcAttr.Cloneflags (no CGO).
-// Namespace creation happens at fork time via clone(). The child starts
-// directly in the new namespaces as PID 1.
-// If rp is non-nil, the child's status/ready pipe fds are passed so the child
-// blocks after setup until Start() is called.
 func (c *Container) startChild(subcommand string, p *Process, extraArgs []string, rp *readyPipes) (int, error) {
 	initR, initW, err := os.Pipe()
 	if err != nil {
@@ -35,29 +30,18 @@ func (c *Container) startChild(subcommand string, p *Process, extraArgs []string
 		fmt.Sprintf("_CONTAINER_INITFD=%d", 3+0),
 	)
 
-	if rp != nil {
-		extraFiles = append(extraFiles, rp.statusW, rp.readyR)
-		env = append(env,
-			fmt.Sprintf("_CONTAINER_STATUSFD=%d", fdOffset+0),
-			fmt.Sprintf("_CONTAINER_READYFD=%d", fdOffset+1),
-		)
-		fdOffset += 2
-	}
-
-	var consoleParent *os.File
-	if p != nil && p.Terminal {
-		parent, child, err := newConsoleSocketPair()
-		if err != nil {
-			return 0, err
-		}
-		consoleParent = parent
-		extraFiles = append(extraFiles, child)
-		env = append(env, fmt.Sprintf("_CONTAINER_CONSOLEFD=%d", fdOffset))
-		fdOffset++
+	// Shared: ready pipes + console socket.
+	consoleParent, err := addChildPipes(&extraFiles, &env, fdOffset, p, rp)
+	if err != nil {
+		initR.Close()
+		initW.Close()
+		return 0, err
 	}
 
 	cmd.ExtraFiles = extraFiles
 	cmd.Env = env
+
+	// Pure Go: namespaces via clone flags at fork time.
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags:  c.cfg.Namespaces.CloneFlags(),
 		UidMappings: c.cfg.UidMappings,
@@ -79,20 +63,9 @@ func (c *Container) startChild(subcommand string, p *Process, extraArgs []string
 
 	initR.Close()
 
-	data := initData{Config: c.cfg, Process: p}
-	if err := json.NewEncoder(initW).Encode(&data); err != nil {
-		initW.Close()
-		return 0, fmt.Errorf("write init data: %w", err)
-	}
-	initW.Close()
-
-	if consoleParent != nil {
-		master, err := receiveConsole(consoleParent)
-		consoleParent.Close()
-		if err != nil {
-			return 0, fmt.Errorf("receive console: %w", err)
-		}
-		c.console = master
+	// Shared: write init data JSON + receive console.
+	if err := c.finishChildStart(initW, p, consoleParent); err != nil {
+		return 0, err
 	}
 
 	return cmd.Process.Pid, nil

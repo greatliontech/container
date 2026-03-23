@@ -1,6 +1,7 @@
 package container
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -214,6 +215,54 @@ func (c *Container) postStart() error {
 				slog.Warn("failed to add process to cgroup", "error", err)
 			}
 		}
+	}
+
+	return nil
+}
+
+// addChildPipes appends ready pipes and console socket to the child's ExtraFiles
+// and env vars. Returns the console parent fd (or nil) for post-start processing.
+func addChildPipes(extraFiles *[]*os.File, env *[]string, fdOffset int, p *Process, rp *readyPipes) (*os.File, error) {
+	if rp != nil {
+		*extraFiles = append(*extraFiles, rp.statusW, rp.readyR)
+		*env = append(*env,
+			fmt.Sprintf("_CONTAINER_STATUSFD=%d", fdOffset+0),
+			fmt.Sprintf("_CONTAINER_READYFD=%d", fdOffset+1),
+		)
+		fdOffset += 2
+	}
+
+	var consoleParent *os.File
+	if p != nil && p.Terminal {
+		parent, child, err := newConsoleSocketPair()
+		if err != nil {
+			return nil, err
+		}
+		consoleParent = parent
+		*extraFiles = append(*extraFiles, child)
+		*env = append(*env, fmt.Sprintf("_CONTAINER_CONSOLEFD=%d", fdOffset))
+	}
+
+	return consoleParent, nil
+}
+
+// finishChildStart writes init data JSON to the child and receives the
+// console master PTY fd if a terminal was requested.
+func (c *Container) finishChildStart(initW *os.File, p *Process, consoleParent *os.File) error {
+	data := initData{Config: c.cfg, Process: p}
+	if err := json.NewEncoder(initW).Encode(&data); err != nil {
+		initW.Close()
+		return fmt.Errorf("write init data: %w", err)
+	}
+	initW.Close()
+
+	if consoleParent != nil {
+		master, err := receiveConsole(consoleParent)
+		consoleParent.Close()
+		if err != nil {
+			return fmt.Errorf("receive console: %w", err)
+		}
+		c.console = master
 	}
 
 	return nil

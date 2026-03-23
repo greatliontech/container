@@ -9,7 +9,6 @@ import "C"
 
 import (
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -53,14 +52,12 @@ type nsJoinSpec struct {
 }
 
 // startChild launches the child via the C constructor (pipes + sync protocol).
-// If rp is non-nil, the child's status/ready pipe fds are passed so the child
-// blocks after setup until Start() is called.
 func (c *Container) startChild(subcommand string, p *Process, extraArgs []string, rp *readyPipes) (int, error) {
-	// Set child subreaper so forked grandchild reparents to us.
 	if err := unix.Prctl(unix.PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0); err != nil {
 		return 0, fmt.Errorf("prctl child subreaper: %w", err)
 	}
 
+	// CGO-specific pipes: C config + sync socketpair.
 	configR, configW, err := os.Pipe()
 	if err != nil {
 		return 0, fmt.Errorf("config pipe: %w", err)
@@ -93,25 +90,16 @@ func (c *Container) startChild(subcommand string, p *Process, extraArgs []string
 		fmt.Sprintf("_CONTAINER_INITFD=%d", 3+2),
 	)
 
-	if rp != nil {
-		extraFiles = append(extraFiles, rp.statusW, rp.readyR)
-		env = append(env,
-			fmt.Sprintf("_CONTAINER_STATUSFD=%d", fdOffset+0),
-			fmt.Sprintf("_CONTAINER_READYFD=%d", fdOffset+1),
-		)
-		fdOffset += 2
-	}
-
-	var consoleParent *os.File
-	if p != nil && p.Terminal {
-		parent, child, err := newConsoleSocketPair()
-		if err != nil {
-			return 0, err
-		}
-		consoleParent = parent
-		extraFiles = append(extraFiles, child)
-		env = append(env, fmt.Sprintf("_CONTAINER_CONSOLEFD=%d", fdOffset))
-		fdOffset++
+	// Shared: ready pipes + console socket.
+	consoleParent, err := addChildPipes(&extraFiles, &env, fdOffset, p, rp)
+	if err != nil {
+		configR.Close()
+		configW.Close()
+		initR.Close()
+		initW.Close()
+		syncParent.Close()
+		syncChild.Close()
+		return 0, err
 	}
 
 	cmd.ExtraFiles = extraFiles
@@ -143,7 +131,7 @@ func (c *Container) startChild(subcommand string, p *Process, extraArgs []string
 	syncChild.Close()
 	initR.Close()
 
-	// Write C config.
+	// CGO-specific: write C config binary.
 	cConfig := &nsenterCConfig{
 		CloneFlags: uint32(c.cfg.Namespaces.CloneFlags()),
 	}
@@ -167,31 +155,17 @@ func (c *Container) startChild(subcommand string, p *Process, extraArgs []string
 	}
 	configW.Close()
 
-	// Write init data (JSON).
-	data := initData{Config: c.cfg, Process: p}
-	if err := json.NewEncoder(initW).Encode(&data); err != nil {
-		initW.Close()
+	// Shared: write init data JSON + receive console.
+	if err := c.finishChildStart(initW, p, consoleParent); err != nil {
 		syncParent.Close()
-		return 0, fmt.Errorf("write init data: %w", err)
+		return 0, err
 	}
-	initW.Close()
 
-	// Run sync protocol.
+	// CGO-specific: sync protocol.
 	containerPid, err := runParentSync(syncParent, cmd.Process.Pid, &c.cfg)
 	syncParent.Close()
 	if err != nil {
 		return 0, fmt.Errorf("sync protocol: %w", err)
-	}
-
-	// Receive master PTY fd if terminal was requested.
-	// The child sends it after containerSetup (including PTY allocation).
-	if consoleParent != nil {
-		master, err := receiveConsole(consoleParent)
-		consoleParent.Close()
-		if err != nil {
-			return 0, fmt.Errorf("receive console: %w", err)
-		}
-		c.console = master
 	}
 
 	return containerPid, nil
