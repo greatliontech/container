@@ -198,7 +198,11 @@ func (c *Container) RunSelf(args ...string) error {
 // postStart handles cgroup setup after the container process starts.
 func (c *Container) postStart() error {
 	if c.cfg.Resources != nil {
-		cg, err := NewCgroup("container-" + c.id)
+		cgName := "container-" + c.id
+		if c.cfg.CgroupsPath != "" {
+			cgName = c.cfg.CgroupsPath
+		}
+		cg, err := NewCgroup(cgName)
 		if err != nil {
 			slog.Warn("failed to create cgroup, running without resource limits", "error", err)
 		} else {

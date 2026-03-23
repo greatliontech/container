@@ -4,7 +4,6 @@ Reference: [opencontainers/runtime-spec v1.3.0](https://github.com/opencontainer
 
 Status key:
 - [x] Implemented in runtime and OCI converter
-- [~] Partially implemented (see notes)
 - [ ] Not implemented
 
 ---
@@ -24,8 +23,8 @@ Status key:
 
 ## Process
 
-- [x] Terminal — ConsoleSocket + ConsoleHeight/ConsoleWidth on Config, caller provides socket path
-- [x] ConsoleSize — mapped to Config.ConsoleHeight/ConsoleWidth, TIOCSWINSZ ioctl on slave PTY
+- [x] Terminal — mapped to Process.Terminal, PTY allocated automatically, master via Container.Console()
+- [x] ConsoleSize — mapped to Process.ConsoleHeight/ConsoleWidth, TIOCSWINSZ ioctl
 - [x] User.UID — mapped to Process.Credential.Uid
 - [x] User.GID — mapped to Process.Credential.Gid
 - [x] User.AdditionalGids — mapped to Process.Credential.Groups
@@ -49,20 +48,20 @@ Status key:
 - [x] UIDMappings — mapped to Config.UidMappings
 - [x] GIDMappings — mapped to Config.GidMappings
 - [x] Sysctl — mapped to Config.Sysctl
-- [~] Resources — see LinuxResources below
-- [ ] CgroupsPath — ignored (runtime auto-creates cgroups)
+- [x] Resources — see LinuxResources below
+- [x] CgroupsPath — mapped to Config.CgroupsPath
 - [x] Namespaces — all 8 types, create or join
-- [x] Devices — converted to Config.Devices
+- [x] Devices — converted to Config.Devices (including UID/GID)
 - [ ] NetDevices — not supported
-- [~] Seccomp — see LinuxSeccomp below
-- [ ] RootfsPropagation — always MS_PRIVATE
+- [x] Seccomp — see LinuxSeccomp below
+- [x] RootfsPropagation — mapped to Config.RootfsPropagation (private/slave/shared)
 - [x] MaskedPaths — mapped to Config.MaskPaths
 - [x] ReadonlyPaths — mapped to Config.ReadonlyPaths
 - [ ] MountLabel — SELinux, not supported
 - [ ] IntelRdt — not supported
 - [ ] MemoryPolicy — not supported
 - [ ] Personality — not supported
-- [ ] TimeOffsets — no field in Config (namespace exists but offsets not configurable)
+- [ ] TimeOffsets — requires C sync protocol extension
 
 ## LinuxNamespace
 
@@ -78,25 +77,25 @@ Status key:
 
 ## LinuxResources
 
-- [ ] Devices (cgroup device allowlist) — not supported
-- [~] Memory — see LinuxMemory below
-- [~] CPU — see LinuxCPU below
+- [ ] Devices (cgroup device allowlist) — requires eBPF in cgroups v2
+- [x] Memory — see LinuxMemory below
+- [x] CPU — see LinuxCPU below
 - [x] Pids.Limit — mapped to Resources.Pids.Max
-- [ ] BlockIO — not converted (runtime has IO.Max but different format)
+- [x] BlockIO — converted to IO.Weight + IO.Max via throttle device mapping
 - [ ] HugepageLimits — not supported
 - [ ] Network — not supported
 - [ ] Rdma — not supported
-- [ ] Unified (raw cgroup key-value) — not supported
+- [x] Unified — mapped to Resources.Unified, raw cgroup key-value writes
 
 ## LinuxMemory
 
 - [x] Limit — mapped to Resources.Memory.Max
 - [x] Reservation — mapped to Resources.Memory.High
 - [x] Swap — mapped to Resources.Memory.SwapMax
+- [x] DisableOOMKiller — mapped to Resources.Memory.DisableOOMKiller (memory.oom.group)
 - [ ] Kernel — deprecated in cgroups v2
 - [ ] KernelTCP — deprecated in cgroups v2
-- [ ] Swappiness — not supported
-- [ ] DisableOOMKiller — not supported
+- [ ] Swappiness — cgroups v1 only
 - [ ] UseHierarchy — cgroups v2 always hierarchical
 - [ ] CheckBeforeUpdate — not supported
 
@@ -105,7 +104,7 @@ Status key:
 - [x] Shares — mapped to Resources.CPU.Weight
 - [x] Quota — mapped to Resources.CPU.Quota
 - [x] Period — mapped to Resources.CPU.Period
-- [ ] Burst — not supported
+- [x] Burst — mapped to Resources.CPU.Burst (cpu.max.burst)
 - [ ] RealtimeRuntime — not supported
 - [ ] RealtimePeriod — not supported
 - [x] Cpus — mapped to Resources.CPU.Cpus
@@ -123,14 +122,14 @@ Status key:
 - [x] Syscalls.Names — converted
 - [x] Syscalls.Action — converted
 - [ ] Syscalls.ErrnoRet — not supported
-- [ ] Syscalls.Args — not converted (runtime supports it via go-seccomp-bpf but OCI→internal conversion missing)
+- [x] Syscalls.Args — converted to go-seccomp-bpf Conditions via operator mapping
 
 ## LinuxSeccompArg
 
-- [ ] Index — not converted
-- [ ] Value — not converted
-- [ ] ValueTwo — not converted
-- [ ] Op — not converted
+- [x] Index — mapped to Condition.Argument
+- [x] Value — mapped to Condition.Value
+- [ ] ValueTwo — not supported (MaskedEqual second operand)
+- [x] Op — mapped: SCMP_CMP_EQ→Equal, NE→NotEqual, GT→GreaterThan, GE→GreaterOrEqual, LT→LessThan, LE→LessOrEqual, MASKED_EQ→BitsSet
 
 ## LinuxCapabilities
 
@@ -148,18 +147,18 @@ Status key:
 
 ## User
 
-- [ ] UID — not mapped to Process.Credential
-- [ ] GID — not mapped to Process.Credential
-- [ ] Umask — not supported
-- [ ] AdditionalGids — not mapped
-- [ ] Username — not supported
+- [x] UID — mapped to Process.Credential.Uid
+- [x] GID — mapped to Process.Credential.Gid
+- [x] AdditionalGids — mapped to Process.Credential.Groups
+- [x] Umask — mapped to Process.Umask
+- [ ] Username — requires container /etc/passwd parsing
 
 ## Hook
 
 - [x] Path — mapped
 - [x] Args — mapped
 - [x] Env — mapped
-- [~] Timeout — field exists but OCI seconds→Go duration conversion incomplete
+- [x] Timeout — converted from OCI seconds (*int) to Go time.Duration
 
 ## Mount
 
@@ -167,8 +166,8 @@ Status key:
 - [x] Type — mapped
 - [x] Source — mapped
 - [x] Options — parsed to flags + data string
-- [ ] UIDMappings — not supported (mount-level ID mapping)
-- [ ] GIDMappings — not supported
+- [ ] UIDMappings — mount-level ID mapping (mount_setattr)
+- [ ] GIDMappings — mount-level ID mapping
 
 ## LinuxDevice
 
@@ -177,12 +176,12 @@ Status key:
 - [x] Major — mapped
 - [x] Minor — mapped
 - [x] FileMode — mapped
-- [ ] UID — not mapped (Device struct has field but converter doesn't set it)
-- [ ] GID — not mapped
+- [x] UID — mapped
+- [x] GID — mapped
 
 ## LinuxDeviceCgroup (cgroup device allowlist)
 
-- [ ] Allow — not supported
+- [ ] Allow — not supported (requires eBPF in cgroups v2)
 - [ ] Type — not supported
 - [ ] Major — not supported
 - [ ] Minor — not supported
@@ -190,13 +189,13 @@ Status key:
 
 ## LinuxBlockIO
 
-- [ ] Weight — not converted
+- [x] Weight — mapped to IO.Weight
 - [ ] LeafWeight — not supported
 - [ ] WeightDevice — not supported
-- [ ] ThrottleReadBpsDevice — not supported
-- [ ] ThrottleWriteBpsDevice — not supported
-- [ ] ThrottleReadIOPSDevice — not supported
-- [ ] ThrottleWriteIOPSDevice — not supported
+- [x] ThrottleReadBpsDevice — converted to IO.Max entries
+- [x] ThrottleWriteBpsDevice — converted to IO.Max entries
+- [x] ThrottleReadIOPSDevice — converted to IO.Max entries
+- [x] ThrottleWriteIOPSDevice — converted to IO.Max entries
 
 ## LinuxHugepageLimit
 
@@ -233,8 +232,8 @@ Status key:
 
 ## Box (console size)
 
-- [ ] Height — not supported
-- [ ] Width — not supported
+- [x] Height — mapped to Process.ConsoleHeight
+- [x] Width — mapped to Process.ConsoleWidth
 
 ## Scheduler
 

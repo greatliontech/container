@@ -158,8 +158,15 @@ func containerSetup(cfg *Config) error {
 		}
 	}
 
-	if err := unix.Mount("", "/", "", unix.MS_PRIVATE|unix.MS_REC, ""); err != nil {
-		return fmt.Errorf("mount private: %w", err)
+	propagation := unix.MS_PRIVATE | unix.MS_REC
+	switch cfg.RootfsPropagation {
+	case "slave", "rslave":
+		propagation = unix.MS_SLAVE | unix.MS_REC
+	case "shared", "rshared":
+		propagation = unix.MS_SHARED | unix.MS_REC
+	}
+	if err := unix.Mount("", "/", "", uintptr(propagation), ""); err != nil {
+		return fmt.Errorf("mount propagation: %w", err)
 	}
 
 	for _, m := range cfg.Mounts {

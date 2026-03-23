@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/elastic/go-seccomp-bpf"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
@@ -68,6 +69,12 @@ func FromOCISpec(spec *specs.Spec) (*Config, *Process, error) {
 		// Sysctl.
 		cfg.Sysctl = l.Sysctl
 
+		// Cgroup path.
+		cfg.CgroupsPath = l.CgroupsPath
+
+		// Rootfs propagation.
+		cfg.RootfsPropagation = l.RootfsPropagation
+
 		// Masked/readonly paths.
 		cfg.MaskPaths = l.MaskedPaths
 		cfg.ReadonlyPaths = l.ReadonlyPaths
@@ -87,6 +94,12 @@ func FromOCISpec(spec *specs.Spec) (*Config, *Process, error) {
 			}
 			if d.FileMode != nil {
 				dev.Mode = uint32(*d.FileMode)
+			}
+			if d.UID != nil {
+				dev.Uid = *d.UID
+			}
+			if d.GID != nil {
+				dev.Gid = *d.GID
 			}
 			cfg.Devices = append(cfg.Devices, dev)
 		}
@@ -267,6 +280,9 @@ func convertResources(r *specs.LinuxResources) *Resources {
 		if r.Memory.Swap != nil {
 			mem.SwapMax = *r.Memory.Swap
 		}
+		if r.Memory.DisableOOMKiller != nil && *r.Memory.DisableOOMKiller {
+			mem.DisableOOMKiller = true
+		}
 		res.Memory = mem
 	}
 
@@ -277,6 +293,9 @@ func convertResources(r *specs.LinuxResources) *Resources {
 		}
 		if r.CPU.Period != nil {
 			cpu.Period = *r.CPU.Period
+		}
+		if r.CPU.Burst != nil {
+			cpu.Burst = *r.CPU.Burst
 		}
 		if r.CPU.Shares != nil {
 			cpu.Weight = *r.CPU.Shares
@@ -290,7 +309,45 @@ func convertResources(r *specs.LinuxResources) *Resources {
 		res.Pids = &PidsResources{Max: *r.Pids.Limit}
 	}
 
+	// BlockIO → IO conversion.
+	if r.BlockIO != nil {
+		io := &IOResources{}
+		if r.BlockIO.Weight != nil {
+			io.Weight = uint64(*r.BlockIO.Weight)
+		}
+		io.Max = make(map[string]string)
+		for _, td := range r.BlockIO.ThrottleReadBpsDevice {
+			key := fmt.Sprintf("%d:%d", td.Major, td.Minor)
+			io.Max[key] = appendIOLimit(io.Max[key], "rbps", td.Rate)
+		}
+		for _, td := range r.BlockIO.ThrottleWriteBpsDevice {
+			key := fmt.Sprintf("%d:%d", td.Major, td.Minor)
+			io.Max[key] = appendIOLimit(io.Max[key], "wbps", td.Rate)
+		}
+		for _, td := range r.BlockIO.ThrottleReadIOPSDevice {
+			key := fmt.Sprintf("%d:%d", td.Major, td.Minor)
+			io.Max[key] = appendIOLimit(io.Max[key], "riops", td.Rate)
+		}
+		for _, td := range r.BlockIO.ThrottleWriteIOPSDevice {
+			key := fmt.Sprintf("%d:%d", td.Major, td.Minor)
+			io.Max[key] = appendIOLimit(io.Max[key], "wiops", td.Rate)
+		}
+		if io.Weight > 0 || len(io.Max) > 0 {
+			res.IO = io
+		}
+	}
+
+	res.Unified = r.Unified
+
 	return res
+}
+
+func appendIOLimit(existing, key string, rate uint64) string {
+	entry := fmt.Sprintf("%s=%d", key, rate)
+	if existing == "" {
+		return entry
+	}
+	return existing + " " + entry
 }
 
 // --- Seccomp conversion ---
@@ -305,13 +362,54 @@ func convertSeccomp(s *specs.LinuxSeccomp) (*SeccompProfile, error) {
 			Action: convertSeccompAction(sc.Action),
 			Names:  sc.Names,
 		}
-		// Argument filtering is supported but conversion from OCI's
-		// per-arg format to go-seccomp-bpf's Condition format is
-		// complex. Basic name-based rules are converted directly.
+		// Convert argument filters if present.
+		if len(sc.Args) > 0 {
+			for _, name := range sc.Names {
+				nc := seccomp.NameWithConditions{
+					Name:       name,
+					Conditions: convertSeccompArgs(sc.Args),
+				}
+				group.NamesWithCondtions = append(group.NamesWithCondtions, nc)
+			}
+			group.Names = nil // Use NamesWithConditions instead.
+		}
 		profile.Syscalls = append(profile.Syscalls, group)
 	}
 
 	return profile, nil
+}
+
+func convertSeccompArgs(args []specs.LinuxSeccompArg) seccomp.ArgumentConditions {
+	var conditions seccomp.ArgumentConditions
+	for _, arg := range args {
+		conditions = append(conditions, seccomp.Condition{
+			Argument:  uint32(arg.Index),
+			Operation: convertSeccompOp(arg.Op),
+			Value:     arg.Value,
+		})
+	}
+	return conditions
+}
+
+func convertSeccompOp(op specs.LinuxSeccompOperator) seccomp.Operation {
+	switch op {
+	case specs.OpEqualTo:
+		return seccomp.Equal
+	case specs.OpNotEqual:
+		return seccomp.NotEqual
+	case specs.OpGreaterThan:
+		return seccomp.GreaterThan
+	case specs.OpGreaterEqual:
+		return seccomp.GreaterOrEqual
+	case specs.OpLessThan:
+		return seccomp.LessThan
+	case specs.OpLessEqual:
+		return seccomp.LessOrEqual
+	case specs.OpMaskedEqual:
+		return seccomp.BitsSet
+	default:
+		return seccomp.Equal
+	}
 }
 
 func convertSeccompAction(a specs.LinuxSeccompAction) seccomp.Action {
@@ -379,7 +477,7 @@ func convertHookList(ociHooks []specs.Hook) []Hook {
 			Env:  h.Env,
 		}
 		if h.Timeout != nil {
-			hook.Timeout = 0 // OCI timeout is in seconds; convert if needed.
+			hook.Timeout = time.Duration(*h.Timeout) * time.Second
 		}
 		hooks = append(hooks, hook)
 	}

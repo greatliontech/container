@@ -89,12 +89,14 @@ type Config struct {
 	Devices         []Device
 	SetupDev        bool
 	NoNewPrivileges bool
-	MaskPaths       []string // Paths to mask with /dev/null or tmpfs
-	ReadonlyPaths   []string // Paths to remount read-only
+	RootfsPropagation string   // Mount propagation: "private", "slave", "shared" (default: "private")
+	MaskPaths         []string // Paths to mask with /dev/null or tmpfs
+	ReadonlyPaths     []string // Paths to remount read-only
 
 	// Resource limits
-	Resources *Resources
-	Rlimits   []Rlimit
+	Resources  *Resources
+	CgroupsPath string // Custom cgroup path (relative to cgroup root). Auto-generated if empty.
+	Rlimits    []Rlimit
 
 	// Kernel parameters (written to /proc/sys)
 	Sysctl map[string]string

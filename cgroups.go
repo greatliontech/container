@@ -25,55 +25,34 @@ var (
 
 // Resources defines resource limits for a container using cgroups v2
 type Resources struct {
-	// Memory limits
 	Memory *MemoryResources
-
-	// CPU limits
-	CPU *CPUResources
-
-	// Process limits
-	Pids *PidsResources
-
-	// I/O limits
-	IO *IOResources
+	CPU    *CPUResources
+	Pids   *PidsResources
+	IO     *IOResources
+	// Unified is a map of raw cgroup v2 key-value pairs to write directly.
+	Unified map[string]string
 }
 
 // MemoryResources defines memory limits
 type MemoryResources struct {
 	// Max is the hard memory limit in bytes (memory.max)
-	// Use -1 for unlimited
 	Max int64
-
 	// High is the memory throttling threshold in bytes (memory.high)
-	// When exceeded, processes are throttled and put under heavy reclaim pressure
-	// Use -1 for unlimited
 	High int64
-
 	// SwapMax is the swap limit in bytes (memory.swap.max)
-	// Use -1 for unlimited, 0 to disable swap
 	SwapMax int64
+	// DisableOOMKiller enables group OOM killing (memory.oom.group)
+	DisableOOMKiller bool
 }
 
 // CPUResources defines CPU limits
 type CPUResources struct {
-	// Max is the CPU bandwidth limit as "quota period" (cpu.max)
-	// quota is in microseconds, period is typically 100000 (100ms)
-	// e.g., "50000 100000" limits to 50% of one CPU
-	// Use "max 100000" for unlimited
-	Quota  int64
-	Period uint64
-
-	// Weight is the CPU weight for fair scheduling (cpu.weight)
-	// Range: 1-10000, default 100
-	Weight uint64
-
-	// Cpus is the set of CPUs the container can use (cpuset.cpus)
-	// e.g., "0-3" or "0,2,4"
-	Cpus string
-
-	// Mems is the set of memory nodes the container can use (cpuset.mems)
-	// e.g., "0-1" or "0"
-	Mems string
+	Quota  int64  // CPU bandwidth quota in usecs (cpu.max)
+	Period uint64 // CPU bandwidth period in usecs (cpu.max)
+	Burst  uint64 // CPU burst limit in usecs (cpu.max.burst)
+	Weight uint64 // CPU weight for fair scheduling (cpu.weight), 1-10000
+	Cpus   string // CPUs to use (cpuset.cpus), e.g. "0-3"
+	Mems   string // Memory nodes to use (cpuset.mems), e.g. "0-1"
 }
 
 // PidsResources defines process limits
@@ -207,6 +186,12 @@ func (c *Cgroup) Apply(resources *Resources) error {
 		}
 	}
 
+	for key, val := range resources.Unified {
+		if err := c.writeFile(key, val); err != nil {
+			return fmt.Errorf("unified %s: %w", key, err)
+		}
+	}
+
 	return nil
 }
 
@@ -237,7 +222,14 @@ func (c *Cgroup) applyMemory(mem *MemoryResources) error {
 			val = strconv.FormatInt(mem.SwapMax, 10)
 		}
 		if err := c.writeFile("memory.swap.max", val); err != nil {
-			// Swap controller might not be enabled
+			if !os.IsNotExist(err) {
+				return err
+			}
+		}
+	}
+
+	if mem.DisableOOMKiller {
+		if err := c.writeFile("memory.oom.group", "1"); err != nil {
 			if !os.IsNotExist(err) {
 				return err
 			}
@@ -260,6 +252,14 @@ func (c *Cgroup) applyCPU(cpu *CPUResources) error {
 		val := fmt.Sprintf("%s %d", quota, period)
 		if err := c.writeFile("cpu.max", val); err != nil {
 			return err
+		}
+	}
+
+	if cpu.Burst > 0 {
+		if err := c.writeFile("cpu.max.burst", strconv.FormatUint(cpu.Burst, 10)); err != nil {
+			if !os.IsNotExist(err) {
+				return err
+			}
 		}
 	}
 
