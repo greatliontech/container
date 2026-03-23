@@ -627,6 +627,98 @@ func TestIntegration_MultipleNamespaceIsolation(t *testing.T) {
 	t.Log("TestIntegration_MultipleNamespaceIsolation: done")
 }
 
+func TestIntegration_ReadonlyRoot(t *testing.T) {
+	skipIfNotRoot(t)
+
+	rootfs := createTestRootfs(t)
+	containerID := generateTestID(t)
+
+	cfg := Config{
+		Root: rootfs,
+		Namespaces: Namespaces{
+			NewIPC: true,
+			NewMnt: true,
+			NewPID: true,
+			NewUTS: true,
+		},
+		UsePivotRoot: true,
+		SetupDev:     true,
+		ReadonlyRoot: true,
+	}
+
+	c := New(containerID, cfg)
+	defer c.Destroy()
+
+	// Try to write a file — should fail on readonly root.
+	var stdout bytes.Buffer
+	proc := &Process{
+		Cmd:    "/bin/sh",
+		Args:   []string{"-c", "echo test > /testfile 2>&1; echo $?"},
+		Stdout: &stdout,
+	}
+
+	if err := c.Run(proc); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	c.Wait()
+
+	output := strings.TrimSpace(stdout.String())
+	// Write should fail — exit code 1 or error message.
+	if !strings.Contains(output, "1") && !strings.Contains(output, "Read-only") {
+		t.Errorf("root should be readonly, got: %q", output)
+	}
+}
+
+func TestIntegration_Domainname(t *testing.T) {
+	skipIfNotRoot(t)
+
+	rootfs := createTestRootfs(t)
+	containerID := generateTestID(t)
+
+	cfg := Config{
+		Root: rootfs,
+		Namespaces: Namespaces{
+			NewIPC: true,
+			NewMnt: true,
+			NewPID: true,
+			NewUTS: true,
+		},
+		Hostname:     "testhost",
+		Domainname:   "example.com",
+		UsePivotRoot: true,
+		SetupDev:     true,
+		// Mount proc so we can read /proc/sys/kernel/domainname.
+		Mounts: []Mount{
+			{
+				Source: "proc",
+				Target: filepath.Join(rootfs, "proc"),
+				Type:   "proc",
+				Flags:  MountFlags.Proc,
+			},
+		},
+	}
+
+	c := New(containerID, cfg)
+	defer c.Destroy()
+
+	var stdout bytes.Buffer
+	proc := &Process{
+		Cmd:    "/bin/cat",
+		Args:   []string{"/proc/sys/kernel/domainname"},
+		Stdout: &stdout,
+	}
+
+	if err := c.Run(proc); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	c.Wait()
+
+	output := strings.TrimSpace(stdout.String())
+	if output != "example.com" {
+		t.Errorf("domainname = %q, want example.com", output)
+	}
+}
+
 func TestIntegration_MaskedPaths(t *testing.T) {
 	skipIfNotRoot(t)
 
