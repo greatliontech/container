@@ -53,7 +53,9 @@ type nsJoinSpec struct {
 }
 
 // startChild launches the child via the C constructor (pipes + sync protocol).
-func (c *Container) startChild(subcommand string, p *Process, extraArgs []string) (int, error) {
+// If rp is non-nil, the child's status/ready pipe fds are passed so the child
+// blocks after setup until Start() is called.
+func (c *Container) startChild(subcommand string, p *Process, extraArgs []string, rp *readyPipes) (int, error) {
 	// Set child subreaper so forked grandchild reparents to us.
 	if err := unix.Prctl(unix.PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0); err != nil {
 		return 0, fmt.Errorf("prctl child subreaper: %w", err)
@@ -82,13 +84,25 @@ func (c *Container) startChild(subcommand string, p *Process, extraArgs []string
 	args = append(args, extraArgs...)
 
 	cmd := exec.Command("/proc/self/exe", args...)
-	cmd.ExtraFiles = []*os.File{configR, syncChild, initR}
-	cmd.Env = append(os.Environ(),
+	extraFiles := []*os.File{configR, syncChild, initR}
+	fdOffset := 3 + len(extraFiles)
+	env := append(os.Environ(),
 		"_CONTAINER_MODE=setup",
 		fmt.Sprintf("_CONTAINER_CONFIGFD=%d", 3+0),
 		fmt.Sprintf("_CONTAINER_SYNCFD=%d", 3+1),
 		fmt.Sprintf("_CONTAINER_INITFD=%d", 3+2),
 	)
+
+	if rp != nil {
+		extraFiles = append(extraFiles, rp.statusW, rp.readyR)
+		env = append(env,
+			fmt.Sprintf("_CONTAINER_STATUSFD=%d", fdOffset+0),
+			fmt.Sprintf("_CONTAINER_READYFD=%d", fdOffset+1),
+		)
+	}
+
+	cmd.ExtraFiles = extraFiles
+	cmd.Env = env
 
 	if err := c.setupStdio(cmd, p); err != nil {
 		configR.Close()

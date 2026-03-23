@@ -56,6 +56,24 @@ func nsenterCreateHandler() {
 		}
 	}
 
+	// Create/Start separation: signal "setup done", then block until Start().
+	if statusFdStr := os.Getenv("_CONTAINER_STATUSFD"); statusFdStr != "" {
+		statusFd := getenvFd("_CONTAINER_STATUSFD")
+		readyFd := getenvFd("_CONTAINER_READYFD")
+
+		statusF := os.NewFile(uintptr(statusFd), "status-pipe")
+		readyF := os.NewFile(uintptr(readyFd), "ready-pipe")
+
+		// Tell parent: "setup done".
+		statusF.Write([]byte{0})
+		statusF.Close()
+
+		// Block until parent calls Start().
+		var buf [1]byte
+		readyF.Read(buf[:])
+		readyF.Close()
+	}
+
 	p := data.Process
 
 	if p.WorkDir != "" {

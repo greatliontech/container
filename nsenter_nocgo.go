@@ -17,7 +17,9 @@ import (
 // startChild launches the child using SysProcAttr.Cloneflags (no CGO).
 // Namespace creation happens at fork time via clone(). The child starts
 // directly in the new namespaces as PID 1.
-func (c *Container) startChild(subcommand string, p *Process, extraArgs []string) (int, error) {
+// If rp is non-nil, the child's status/ready pipe fds are passed so the child
+// blocks after setup until Start() is called.
+func (c *Container) startChild(subcommand string, p *Process, extraArgs []string, rp *readyPipes) (int, error) {
 	initR, initW, err := os.Pipe()
 	if err != nil {
 		return 0, fmt.Errorf("init pipe: %w", err)
@@ -27,10 +29,22 @@ func (c *Container) startChild(subcommand string, p *Process, extraArgs []string
 	args = append(args, extraArgs...)
 
 	cmd := exec.Command("/proc/self/exe", args...)
-	cmd.ExtraFiles = []*os.File{initR}
-	cmd.Env = append(os.Environ(),
+	extraFiles := []*os.File{initR}
+	fdOffset := 3 + len(extraFiles)
+	env := append(os.Environ(),
 		fmt.Sprintf("_CONTAINER_INITFD=%d", 3+0),
 	)
+
+	if rp != nil {
+		extraFiles = append(extraFiles, rp.statusW, rp.readyR)
+		env = append(env,
+			fmt.Sprintf("_CONTAINER_STATUSFD=%d", fdOffset+0),
+			fmt.Sprintf("_CONTAINER_READYFD=%d", fdOffset+1),
+		)
+	}
+
+	cmd.ExtraFiles = extraFiles
+	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags:  c.cfg.Namespaces.CloneFlags(),
 		UidMappings: c.cfg.UidMappings,

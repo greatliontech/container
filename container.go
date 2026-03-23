@@ -35,9 +35,46 @@ type Container struct {
 	exitCode     int
 	exited       bool
 	cgroup       *Cgroup
+	readyW       *os.File // parent writes "go" here to unblock child exec
 	stdinPipe    io.WriteCloser
 	stdoutPipe   io.ReadCloser
 	stderrPipe   io.ReadCloser
+}
+
+// readyPipes holds the pipe pair used for Create/Start separation.
+// The child writes to statusW after setup, then blocks reading readyR.
+// The parent reads statusR in Create(), writes readyW in Start().
+type readyPipes struct {
+	statusR *os.File // parent reads "setup done"
+	statusW *os.File // child writes "setup done"
+	readyR  *os.File // child reads "go"
+	readyW  *os.File // parent writes "go"
+}
+
+func newReadyPipes() (*readyPipes, error) {
+	statusR, statusW, err := os.Pipe()
+	if err != nil {
+		return nil, fmt.Errorf("status pipe: %w", err)
+	}
+	readyR, readyW, err := os.Pipe()
+	if err != nil {
+		statusR.Close()
+		statusW.Close()
+		return nil, fmt.Errorf("ready pipe: %w", err)
+	}
+	return &readyPipes{
+		statusR: statusR,
+		statusW: statusW,
+		readyR:  readyR,
+		readyW:  readyW,
+	}, nil
+}
+
+func (rp *readyPipes) closeAll() {
+	rp.statusR.Close()
+	rp.statusW.Close()
+	rp.readyR.Close()
+	rp.readyW.Close()
 }
 
 // New creates a new container with the given configuration.
@@ -48,22 +85,108 @@ func New(id string, cfg Config) *Container {
 	}
 }
 
-// Run starts the container with the given process.
-// Namespaces are configured via the C constructor (CGO) or SysProcAttr (pure Go).
+// Create sets up the container (namespaces, mounts, security) but does NOT
+// exec the target process. The container is in "created" state after this
+// returns. Call Start() to exec the target.
+//
+// This enables OCI-style lifecycle hooks between create and start:
+//
+//	c.Create(proc)
+//	// createRuntime / createContainer hooks run here
+//	c.Start()
+//	// startContainer / poststart hooks run here
+func Create(id string, cfg Config, p *Process) (*Container, error) {
+	c := New(id, cfg)
+
+	rp, err := newReadyPipes()
+	if err != nil {
+		return nil, err
+	}
+
+	containerPid, err := c.startChild("__container", p, nil, rp)
+	if err != nil {
+		rp.closeAll()
+		return nil, err
+	}
+	c.containerPid = containerPid
+
+	// Close child-side ends.
+	rp.statusW.Close()
+	rp.readyR.Close()
+
+	// Wait for child to signal "setup done".
+	var buf [1]byte
+	if _, err := rp.statusR.Read(buf[:]); err != nil {
+		rp.statusR.Close()
+		rp.readyW.Close()
+		return nil, fmt.Errorf("wait for child ready: %w", err)
+	}
+	rp.statusR.Close()
+
+	// Store readyW for Start().
+	c.readyW = rp.readyW
+
+	if err := c.postStart(); err != nil {
+		return nil, err
+	}
+
+	return c, nil
+}
+
+// Start signals the container child to exec the target process.
+// Must be called after Create(). The container moves to "running" state.
+func (c *Container) Start() error {
+	if c.readyW == nil {
+		return fmt.Errorf("container not in created state (use Create, not Run)")
+	}
+
+	_, err := c.readyW.Write([]byte{0})
+	c.readyW.Close()
+	c.readyW = nil
+	return err
+}
+
+// Run creates and starts the container in one call.
+// Equivalent to Create() + Start().
 func (c *Container) Run(p *Process) error {
-	containerPid, err := c.startChild("__container", p, nil)
+	rp, err := newReadyPipes()
 	if err != nil {
 		return err
 	}
+
+	containerPid, err := c.startChild("__container", p, nil, rp)
+	if err != nil {
+		rp.closeAll()
+		return err
+	}
 	c.containerPid = containerPid
+
+	rp.statusW.Close()
+	rp.readyR.Close()
+
+	// Wait for "setup done".
+	var buf [1]byte
+	if _, err := rp.statusR.Read(buf[:]); err != nil {
+		rp.statusR.Close()
+		rp.readyW.Close()
+		return fmt.Errorf("wait for child ready: %w", err)
+	}
+	rp.statusR.Close()
+
+	// Immediately signal "go".
+	if _, err := rp.readyW.Write([]byte{0}); err != nil {
+		rp.readyW.Close()
+		return fmt.Errorf("signal child start: %w", err)
+	}
+	rp.readyW.Close()
+
 	return c.postStart()
 }
 
 // RunSelf starts a container where the target binary is this process itself.
-// The child re-execs /proc/self/exe through namespace setup, and main()
-// detects InContainer() to run container-specific logic.
+// No Create/Start separation — the child returns to main() after setup.
 func (c *Container) RunSelf(args ...string) error {
-	containerPid, err := c.startChild("__self", nil, args)
+	containerPid, err := c.startChild("__self", nil, args, nil)
 	if err != nil {
 		return err
 	}
@@ -71,7 +194,7 @@ func (c *Container) RunSelf(args ...string) error {
 	return c.postStart()
 }
 
-// postStart handles cgroup and network setup after the container process starts.
+// postStart handles cgroup setup after the container process starts.
 func (c *Container) postStart() error {
 	if c.cfg.Resources != nil {
 		cg, err := NewCgroup("container-" + c.id)
@@ -154,7 +277,6 @@ func (c *Container) Wait() error {
 	}
 
 	if c.containerPid == c.cmd.Process.Pid {
-		// No fork — direct child is the container process.
 		err := c.cmd.Wait()
 		c.exited = true
 		if c.cmd.ProcessState != nil {
@@ -163,11 +285,8 @@ func (c *Container) Wait() error {
 		return err
 	}
 
-	// Fork happened. cmd.Wait() blocks until all pipes close
-	// (which happens when the grandchild exits, since it inherited the fds).
 	_ = c.cmd.Wait()
 
-	// Reap the grandchild to get its exit status.
 	var ws syscall.WaitStatus
 	_, err := syscall.Wait4(c.containerPid, &ws, 0, nil)
 	c.exited = true
@@ -187,8 +306,12 @@ func (c *Container) Wait() error {
 
 // Destroy cleans up container resources.
 func (c *Container) Destroy() error {
-	var errs []error
+	if c.readyW != nil {
+		c.readyW.Close()
+		c.readyW = nil
+	}
 
+	var errs []error
 	if c.cgroup != nil {
 		if err := c.cgroup.Delete(); err != nil {
 			errs = append(errs, err)
