@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 	"time"
 )
@@ -28,26 +27,6 @@ func skipIfNoCgroupV2(t *testing.T) {
 	t.Helper()
 	if !isCgroupV2() {
 		t.Skip("test requires cgroup v2")
-	}
-}
-
-// skipIfNoNetwork skips the test if network tests cannot be run
-func skipIfNoNetwork(t *testing.T) {
-	t.Helper()
-	skipIfNotRoot(t)
-	// Check if we can create network interfaces
-	if _, err := os.Stat("/sys/class/net"); err != nil {
-		t.Skip("test requires network support")
-	}
-}
-
-// skipIfNoNftables skips the test if nftables is not available
-func skipIfNoNftables(t *testing.T) {
-	t.Helper()
-	skipIfNotRoot(t)
-	// Check if nftables is available
-	if _, err := os.Stat("/proc/net/netfilter"); err != nil {
-		t.Skip("test requires nftables support")
 	}
 }
 
@@ -225,29 +204,6 @@ func copyFile(src, dst string) error {
 	return os.Chmod(dst, srcInfo.Mode())
 }
 
-// waitForCondition waits for a condition to become true
-func waitForCondition(t *testing.T, cond func() bool, timeout time.Duration) bool {
-	t.Helper()
-
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return true
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	return false
-}
-
-// waitForFile waits for a file to exist
-func waitForFile(t *testing.T, path string, timeout time.Duration) bool {
-	t.Helper()
-	return waitForCondition(t, func() bool {
-		_, err := os.Stat(path)
-		return err == nil
-	}, timeout)
-}
-
 // generateTestID generates a unique test ID
 func generateTestID(t *testing.T) string {
 	t.Helper()
@@ -255,29 +211,6 @@ func generateTestID(t *testing.T) string {
 	h.Write([]byte(t.Name()))
 	h.Write([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))
 	return fmt.Sprintf("test-%x", h.Sum(nil)[:8])
-}
-
-// requireRoot fails the test if not running as root
-func requireRoot(t *testing.T) {
-	t.Helper()
-	if os.Getuid() != 0 {
-		t.Fatal("test requires root privileges")
-	}
-}
-
-// fileContains checks if a file contains a string
-func fileContains(path, needle string) bool {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	return strings.Contains(string(data), needle)
-}
-
-// fileExists checks if a file exists
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
 }
 
 // dirExists checks if a directory exists

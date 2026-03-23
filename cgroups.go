@@ -95,7 +95,6 @@ type IOResources struct {
 // Cgroup represents a cgroup v2 control group
 type Cgroup struct {
 	path string
-	name string
 }
 
 // isCgroupV2 checks if cgroup v2 is mounted
@@ -153,10 +152,7 @@ func NewCgroup(name string) (*Cgroup, error) {
 		enableControllers(parentPath, controllers)
 	}
 
-	return &Cgroup{
-		path: cgroupPath,
-		name: name,
-	}, nil
+	return &Cgroup{path: cgroupPath}, nil
 }
 
 // LoadCgroup loads an existing cgroup
@@ -165,10 +161,7 @@ func LoadCgroup(name string) (*Cgroup, error) {
 	if _, err := os.Stat(cgroupPath); os.IsNotExist(err) {
 		return nil, ErrCgroupNotFound
 	}
-	return &Cgroup{
-		path: cgroupPath,
-		name: name,
-	}, nil
+	return &Cgroup{path: cgroupPath}, nil
 }
 
 // Path returns the cgroup path
