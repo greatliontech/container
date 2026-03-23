@@ -70,9 +70,11 @@ func runHook(hook Hook, state *ContainerState) error {
 	cmd := exec.Command(hook.Path, hook.Args...)
 	cmd.Env = hook.Env
 
-	// Pass container state as JSON on stdin
-	stateJSON, _ := json.Marshal(state)
-	cmd.Stdin = nil // We'll write to stdin pipe
+	// Pass container state as JSON on stdin.
+	stateJSON, err := json.Marshal(state)
+	if err != nil {
+		return fmt.Errorf("marshal hook state: %w", err)
+	}
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -83,8 +85,11 @@ func runHook(hook Hook, state *ContainerState) error {
 		return err
 	}
 
-	// Write state to stdin
-	stdin.Write(stateJSON)
+	if _, err := stdin.Write(stateJSON); err != nil {
+		stdin.Close()
+		cmd.Wait()
+		return fmt.Errorf("write hook state: %w", err)
+	}
 	stdin.Close()
 
 	// Wait with timeout
