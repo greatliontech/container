@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 
@@ -303,9 +304,24 @@ func nsenterSelfHandler() {
 }
 
 // nsenterJoinHandler is the Go-side handler for __nsenter subcommand.
-// The C constructor has already joined the target namespaces.
-// This handler applies chroot/chdir and execs the command.
+//
+// With CGO: the C constructor already joined namespaces and exec'd — this
+// function is never reached.
+//
+// Without CGO (pure Go): this handler joins safe namespaces (uts, ipc, net, pid)
+// via setns, errors if user or mount namespace differs, then execs.
 func nsenterJoinHandler() {
+	if !builtinNsenter {
+		// Pure Go path: join namespaces from Go.
+		pidStr := os.Getenv("_CONTAINER_PID")
+		if pidStr != "" {
+			if err := joinNamespacesPureGo(pidStr); err != nil {
+				fmt.Fprintf(os.Stderr, "nsenter: %v\n", err)
+				os.Exit(1)
+			}
+		}
+	}
+
 	// Parse: __nsenter [--root=X] [--wd=X] -- cmd args...
 	args := os.Args[2:]
 
@@ -355,6 +371,65 @@ func nsenterJoinHandler() {
 		fmt.Fprintf(os.Stderr, "nsenter: exec %s: %v\n", cmdPath, err)
 		os.Exit(1)
 	}
+}
+
+// joinNamespacesPureGo joins namespaces that are safe from Go (uts, ipc, net, pid).
+// Returns an error if the target's user or mount namespace differs from ours
+// (these require single-threaded setns, which Go cannot provide).
+func joinNamespacesPureGo(pidStr string) error {
+	runtime.LockOSThread()
+
+	// Check user namespace — must be the same (can't setns from multi-threaded Go).
+	if nsDiffers(pidStr, "user") {
+		return fmt.Errorf("cannot join user namespace without CGO (requires single-threaded setns)")
+	}
+
+	// Check mount namespace — must be the same.
+	if nsDiffers(pidStr, "mnt") {
+		return fmt.Errorf("cannot join mount namespace without CGO (requires single-threaded setns)")
+	}
+
+	// Join namespaces that are safe from Go.
+	safeNs := []struct {
+		name string
+		flag int
+	}{
+		{"uts", unix.CLONE_NEWUTS},
+		{"ipc", unix.CLONE_NEWIPC},
+		{"net", unix.CLONE_NEWNET},
+		{"pid", unix.CLONE_NEWPID},
+	}
+
+	for _, ns := range safeNs {
+		if !nsDiffers(pidStr, ns.name) {
+			continue
+		}
+		nsPath := fmt.Sprintf("/proc/%s/ns/%s", pidStr, ns.name)
+		fd, err := unix.Open(nsPath, unix.O_RDONLY|unix.O_CLOEXEC, 0)
+		if err != nil {
+			continue // Namespace doesn't exist, skip.
+		}
+		if err := unix.Setns(fd, ns.flag); err != nil {
+			unix.Close(fd)
+			return fmt.Errorf("setns %s: %w", ns.name, err)
+		}
+		unix.Close(fd)
+	}
+
+	return nil
+}
+
+// nsDiffers returns true if the target process is in a different namespace.
+func nsDiffers(pidStr, nsName string) bool {
+	selfPath := fmt.Sprintf("/proc/self/ns/%s", nsName)
+	targetPath := fmt.Sprintf("/proc/%s/ns/%s", pidStr, nsName)
+
+	selfLink, err1 := os.Readlink(selfPath)
+	targetLink, err2 := os.Readlink(targetPath)
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return selfLink != targetLink
 }
 
 // --- Shared setup ---

@@ -131,9 +131,54 @@ func (c *Container) RunSelf(args ...string) error {
 	return nil
 }
 
-// startChild launches the child process through the C constructor.
-// Returns the container PID (grandchild if PID namespace fork, direct child otherwise).
+// startChild launches the child process.
+// With CGO: uses the C constructor for namespace setup (pipes + sync protocol).
+// Without CGO: uses SysProcAttr.Cloneflags (pure Go).
+// Returns the container PID.
 func (c *Container) startChild(subcommand string, p *Process, extraArgs []string) (int, error) {
+	if builtinNsenter {
+		return c.startChildCGO(subcommand, p, extraArgs)
+	}
+	return c.startChildPureGo(subcommand, p, extraArgs)
+}
+
+// setupStdio configures stdio pipes on the command.
+func (c *Container) setupStdio(cmd *exec.Cmd, p *Process) error {
+	if p == nil {
+		return nil
+	}
+	if p.StdinPipe {
+		pipe, err := cmd.StdinPipe()
+		if err != nil {
+			return err
+		}
+		c.stdinPipe = pipe
+	} else {
+		cmd.Stdin = p.Stdin
+	}
+	if p.StdoutPipe {
+		pipe, err := cmd.StdoutPipe()
+		if err != nil {
+			return err
+		}
+		c.stdoutPipe = pipe
+	} else {
+		cmd.Stdout = p.Stdout
+	}
+	if p.StderrPipe {
+		pipe, err := cmd.StderrPipe()
+		if err != nil {
+			return err
+		}
+		c.stderrPipe = pipe
+	} else {
+		cmd.Stderr = p.Stderr
+	}
+	return nil
+}
+
+// startChildCGO launches the child via the C constructor (pipes + sync protocol).
+func (c *Container) startChildCGO(subcommand string, p *Process, extraArgs []string) (int, error) {
 	// Set child subreaper so forked grandchild reparents to us.
 	if err := unix.Prctl(unix.PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0); err != nil {
 		return 0, fmt.Errorf("prctl child subreaper: %w", err)
@@ -159,7 +204,6 @@ func (c *Container) startChild(subcommand string, p *Process, extraArgs []string
 		return 0, fmt.Errorf("sync socketpair: %w", err)
 	}
 
-	// Build command args.
 	args := []string{subcommand}
 	args = append(args, extraArgs...)
 
@@ -172,35 +216,8 @@ func (c *Container) startChild(subcommand string, p *Process, extraArgs []string
 		fmt.Sprintf("_CONTAINER_INITFD=%d", 3+2),
 	)
 
-	// Setup stdio.
-	if p != nil {
-		if p.StdinPipe {
-			pipe, err := cmd.StdinPipe()
-			if err != nil {
-				return 0, err
-			}
-			c.stdinPipe = pipe
-		} else {
-			cmd.Stdin = p.Stdin
-		}
-		if p.StdoutPipe {
-			pipe, err := cmd.StdoutPipe()
-			if err != nil {
-				return 0, err
-			}
-			c.stdoutPipe = pipe
-		} else {
-			cmd.Stdout = p.Stdout
-		}
-		if p.StderrPipe {
-			pipe, err := cmd.StderrPipe()
-			if err != nil {
-				return 0, err
-			}
-			c.stderrPipe = pipe
-		} else {
-			cmd.Stderr = p.Stderr
-		}
+	if err := c.setupStdio(cmd, p); err != nil {
+		return 0, err
 	}
 
 	c.cmd = cmd
@@ -212,17 +229,14 @@ func (c *Container) startChild(subcommand string, p *Process, extraArgs []string
 		return 0, fmt.Errorf("start child: %w", err)
 	}
 
-	// Close child-side fds (child inherited them).
 	configR.Close()
 	syncChild.Close()
 	initR.Close()
 
-	// Build and write C config.
+	// Write C config.
 	cConfig := &nsenterCConfig{
 		CloneFlags: uint32(c.cfg.Namespaces.CloneFlags()),
 	}
-
-	// Determine rootless self-map vs privileged parent-map.
 	if c.cfg.Namespaces.NewUser && isSingleMapping(c.cfg.UidMappings, c.cfg.GidMappings) {
 		cConfig.SelfMap = 1
 		if len(c.cfg.UidMappings) > 0 {
@@ -232,7 +246,6 @@ func (c *Container) startChild(subcommand string, p *Process, extraArgs []string
 			cConfig.GID = uint32(c.cfg.GidMappings[0].HostID)
 		}
 	}
-
 	joins := buildJoinSpecs(&c.cfg.Namespaces)
 	cConfig.JoinCount = uint32(len(joins))
 
@@ -244,7 +257,7 @@ func (c *Container) startChild(subcommand string, p *Process, extraArgs []string
 	}
 	configW.Close()
 
-	// Write init data (JSON config + process for Go child handler).
+	// Write init data (JSON).
 	data := initData{Config: c.cfg, Process: p}
 	if err := json.NewEncoder(initW).Encode(&data); err != nil {
 		initW.Close()
@@ -261,6 +274,55 @@ func (c *Container) startChild(subcommand string, p *Process, extraArgs []string
 	}
 
 	return containerPid, nil
+}
+
+// startChildPureGo launches the child using SysProcAttr.Cloneflags (no CGO).
+// Namespace creation happens at fork time via clone(). The child starts
+// directly in the new namespaces as PID 1.
+func (c *Container) startChildPureGo(subcommand string, p *Process, extraArgs []string) (int, error) {
+	initR, initW, err := os.Pipe()
+	if err != nil {
+		return 0, fmt.Errorf("init pipe: %w", err)
+	}
+
+	args := []string{subcommand}
+	args = append(args, extraArgs...)
+
+	cmd := exec.Command("/proc/self/exe", args...)
+	cmd.ExtraFiles = []*os.File{initR}
+	cmd.Env = append(os.Environ(),
+		fmt.Sprintf("_CONTAINER_INITFD=%d", 3+0),
+	)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Cloneflags:  c.cfg.Namespaces.CloneFlags(),
+		UidMappings: c.cfg.UidMappings,
+		GidMappings: c.cfg.GidMappings,
+	}
+
+	if err := c.setupStdio(cmd, p); err != nil {
+		initR.Close()
+		initW.Close()
+		return 0, err
+	}
+
+	c.cmd = cmd
+
+	if err := cmd.Start(); err != nil {
+		initW.Close()
+		return 0, fmt.Errorf("start child: %w", err)
+	}
+
+	initR.Close()
+
+	// Write init data (JSON).
+	data := initData{Config: c.cfg, Process: p}
+	if err := json.NewEncoder(initW).Encode(&data); err != nil {
+		initW.Close()
+		return 0, fmt.Errorf("write init data: %w", err)
+	}
+	initW.Close()
+
+	return cmd.Process.Pid, nil
 }
 
 // isSingleMapping returns true if the UID/GID mappings are suitable for
