@@ -271,14 +271,20 @@ static void do_setup(void)
 	if (join_count > 0) {
 		join_flags = malloc(join_count * sizeof(uint32_t));
 		join_paths = malloc(join_count * sizeof(*join_paths));
-		if (!join_flags || !join_paths)
+		if (!join_flags || !join_paths) {
+			free(join_flags);
+			free(join_paths);
 			bail("malloc");
+		}
 		for (uint32_t i = 0; i < join_count; i++) {
 			struct ns_join entry;
 			read_exact(configfd, &entry, sizeof(entry));
 			join_flags[i] = entry.flag;
-			if (entry.path_len >= 4096)
+			if (entry.path_len >= 4095) {
+				free(join_flags);
+				free(join_paths);
 				bail_msg("ns path too long");
+			}
 			read_exact(configfd, join_paths[i], entry.path_len);
 			join_paths[i][entry.path_len] = '\0';
 		}

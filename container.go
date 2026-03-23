@@ -51,50 +51,30 @@ func New(id string, cfg Config) *Container {
 }
 
 // Run starts the container with the given process.
-// The process is executed inside namespaces configured via the C constructor.
+// Namespaces are configured via the C constructor (CGO) or SysProcAttr (pure Go).
 func (c *Container) Run(p *Process) error {
-	if c.cfg.Resources != nil {
-		cg, err := NewCgroup("container-" + c.id)
-		if err != nil {
-			slog.Warn("failed to create cgroup, running without resource limits", "error", err)
-		} else {
-			c.cgroup = cg
-			if err := cg.Apply(c.cfg.Resources); err != nil {
-				slog.Warn("failed to apply resource limits", "error", err)
-			}
-		}
-	}
-
 	containerPid, err := c.startChild("__container", p, nil)
 	if err != nil {
 		return err
 	}
 	c.containerPid = containerPid
-
-	// Add container process to cgroup.
-	if c.cgroup != nil {
-		if err := c.cgroup.AddProcess(c.containerPid); err != nil {
-			slog.Warn("failed to add process to cgroup", "error", err)
-		}
-	}
-
-	// Setup networking (needs PID for netns).
-	if c.cfg.Network != nil && c.cfg.Network.Mode == NetworkModeBridge {
-		net, err := SetupContainerNetwork(c.containerPid, *c.cfg.Network)
-		if err != nil {
-			slog.Warn("failed to setup network", "error", err)
-		} else {
-			c.network = net
-		}
-	}
-
-	return nil
+	return c.postStart()
 }
 
 // RunSelf starts a container where the target binary is this process itself.
-// The child re-execs /proc/self/exe through the C constructor, and main()
+// The child re-execs /proc/self/exe through namespace setup, and main()
 // detects InContainer() to run container-specific logic.
 func (c *Container) RunSelf(args ...string) error {
+	containerPid, err := c.startChild("__self", nil, args)
+	if err != nil {
+		return err
+	}
+	c.containerPid = containerPid
+	return c.postStart()
+}
+
+// postStart handles cgroup and network setup after the container process starts.
+func (c *Container) postStart() error {
 	if c.cfg.Resources != nil {
 		cg, err := NewCgroup("container-" + c.id)
 		if err != nil {
@@ -104,18 +84,9 @@ func (c *Container) RunSelf(args ...string) error {
 			if err := cg.Apply(c.cfg.Resources); err != nil {
 				slog.Warn("failed to apply resource limits", "error", err)
 			}
-		}
-	}
-
-	containerPid, err := c.startChild("__self", nil, args)
-	if err != nil {
-		return err
-	}
-	c.containerPid = containerPid
-
-	if c.cgroup != nil {
-		if err := c.cgroup.AddProcess(c.containerPid); err != nil {
-			slog.Warn("failed to add process to cgroup", "error", err)
+			if err := cg.AddProcess(c.containerPid); err != nil {
+				slog.Warn("failed to add process to cgroup", "error", err)
+			}
 		}
 	}
 

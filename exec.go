@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"strings"
 
 	"github.com/vishvananda/netns"
 )
@@ -151,17 +150,8 @@ func SelfContainerize(cfg Config) (int, error) {
 	}
 
 	err := c.Wait()
-	exitCode := 0
-	if err != nil {
-		exitCode = 1
-		// Try to extract exit code from error message.
-		if strings.Contains(err.Error(), "exited with status") {
-			fmt.Sscanf(err.Error(), "container exited with status %d", &exitCode)
-		}
-	}
-
 	c.Destroy()
-	return exitCode, err
+	return c.ExitCode(), err
 }
 
 // JoinNetworkNamespace joins the network namespace of another process.

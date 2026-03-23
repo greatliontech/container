@@ -53,7 +53,7 @@ type initData struct {
 }
 
 // InContainer returns true if the current process is running inside
-// a container created via the CGO constructor (self-containerize or RunSelf).
+// a container created via SelfContainerize or RunSelf.
 func InContainer() bool {
 	return os.Getenv("_CONTAINER_INSIDE") == "1"
 }
@@ -435,7 +435,7 @@ func nsDiffers(pidStr, nsName string) bool {
 // --- Shared setup ---
 
 // containerSetup applies container configuration after namespace setup.
-// This runs in the child process after the C constructor has created/joined namespaces.
+// This runs in the child process after namespaces have been created/joined.
 func containerSetup(cfg *Config) error {
 	if err := unix.Mount("", "/", "", unix.MS_PRIVATE|unix.MS_REC, ""); err != nil {
 		return fmt.Errorf("mount private: %w", err)
