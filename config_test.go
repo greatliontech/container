@@ -218,9 +218,6 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Resources != nil {
 		t.Error("DefaultConfig should not set Resources")
 	}
-	if cfg.Network != nil {
-		t.Error("DefaultConfig should not set Network")
-	}
 	if cfg.Hooks != nil {
 		t.Error("DefaultConfig should not set Hooks")
 	}

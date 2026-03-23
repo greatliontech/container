@@ -281,57 +281,6 @@ func TestIntegration_PidsLimit(t *testing.T) {
 	t.Log("TestIntegration_PidsLimit: done")
 }
 
-func TestIntegration_NetworkNone(t *testing.T) {
-	skipIfNotRoot(t)
-
-	t.Log("TestIntegration_NetworkNone: starting...")
-	rootfs := createTestRootfs(t)
-	containerID := generateTestID(t)
-
-	cfg := Config{
-		Root: rootfs,
-		Namespaces: Namespaces{
-			NewIPC: true,
-			NewMnt: true,
-			NewNet: true, // New network namespace
-			NewPID: true,
-			NewUTS: true,
-		},
-		UsePivotRoot: true,
-		SetupDev:     true,
-		Network: &NetworkConfig{
-			Mode: NetworkModeNone,
-		},
-	}
-
-	t.Log("TestIntegration_NetworkNone: creating container...")
-	c := New(containerID, cfg)
-	defer c.Destroy()
-
-	var stdout bytes.Buffer
-	proc := &Process{
-		Cmd:    "/bin/sh",
-		Args:   []string{"-c", "echo net_none"},
-		Stdout: &stdout,
-	}
-
-	t.Log("TestIntegration_NetworkNone: running...")
-	if err := c.Run(proc); err != nil {
-		t.Fatalf("Run failed: %v", err)
-	}
-
-	t.Log("TestIntegration_NetworkNone: waiting...")
-	if err := c.Wait(); err != nil {
-		t.Logf("Wait returned: %v", err)
-	}
-
-	t.Logf("TestIntegration_NetworkNone: output=%q", stdout.String())
-	if !strings.Contains(stdout.String(), "net_none") {
-		t.Error("container with no network didn't run correctly")
-	}
-	t.Log("TestIntegration_NetworkNone: done")
-}
-
 func TestIntegration_Hooks(t *testing.T) {
 	skipIfNotRoot(t)
 

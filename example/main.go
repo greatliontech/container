@@ -94,20 +94,6 @@ func main() {
 		},
 	}
 
-	// Networking (bridge mode)
-	// Note: requires root privileges and creates network interfaces
-	// Uncomment to enable:
-	// cfg.Network = &container.NetworkConfig{
-	// 	Mode:      container.NetworkModeBridge,
-	// 	Bridge:    "container0",           // bridge name (created if doesn't exist)
-	// 	IPAddress: "10.88.0.2/16",         // container IP
-	// 	Gateway:   "10.88.0.1",            // gateway (bridge IP)
-	// 	DNS:       []string{"8.8.8.8"},    // DNS servers
-	// }
-	// Also write resolv.conf before running:
-	// container.WriteResolvConf(trgtroot, cfg.Network.DNS)
-	// container.WriteHosts(trgtroot, cfg.Hostname, cfg.Network.IPAddress)
-
 	cont := container.New(contID, cfg)
 
 	p := &container.Process{

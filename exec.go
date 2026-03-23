@@ -5,9 +5,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"runtime"
-
-	"github.com/vishvananda/netns"
 )
 
 // ExecConfig configures how to exec into a running container.
@@ -93,19 +90,6 @@ func SelfContainerize(cfg Config) (int, error) {
 	err := c.Wait()
 	c.Destroy()
 	return c.ExitCode(), err
-}
-
-// JoinNetworkNamespace joins the network namespace of another process.
-func JoinNetworkNamespace(pid int) error {
-	nsPath := fmt.Sprintf("/proc/%d/ns/net", pid)
-	ns, err := netns.GetFromPath(nsPath)
-	if err != nil {
-		return err
-	}
-	defer ns.Close()
-
-	runtime.LockOSThread()
-	return netns.Set(ns)
 }
 
 // GetNamespacePaths returns paths to all namespace files for a process.

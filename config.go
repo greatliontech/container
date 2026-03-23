@@ -81,10 +81,6 @@ type Config struct {
 	// Resources configures cgroups v2 resource limits
 	Resources *Resources
 
-	// Networking (Phase 3)
-	// Network configures container networking
-	Network *NetworkConfig
-
 	// Lifecycle (Phase 4)
 	// Hooks configures lifecycle hooks
 	Hooks *Hooks

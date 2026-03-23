@@ -35,7 +35,6 @@ type Container struct {
 	exitCode     int
 	exited       bool
 	cgroup       *Cgroup
-	network      *Network
 	stdinPipe    io.WriteCloser
 	stdoutPipe   io.ReadCloser
 	stderrPipe   io.ReadCloser
@@ -86,15 +85,6 @@ func (c *Container) postStart() error {
 			if err := cg.AddProcess(c.containerPid); err != nil {
 				slog.Warn("failed to add process to cgroup", "error", err)
 			}
-		}
-	}
-
-	if c.cfg.Network != nil && c.cfg.Network.Mode == NetworkModeBridge {
-		net, err := SetupContainerNetwork(c.containerPid, *c.cfg.Network)
-		if err != nil {
-			slog.Warn("failed to setup network", "error", err)
-		} else {
-			c.network = net
 		}
 	}
 
@@ -198,13 +188,6 @@ func (c *Container) Wait() error {
 // Destroy cleans up container resources.
 func (c *Container) Destroy() error {
 	var errs []error
-
-	if c.network != nil {
-		if err := c.network.Cleanup(); err != nil {
-			errs = append(errs, err)
-		}
-		c.network = nil
-	}
 
 	if c.cgroup != nil {
 		if err := c.cgroup.Delete(); err != nil {
