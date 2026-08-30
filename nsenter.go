@@ -3,7 +3,9 @@ package container
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -392,4 +394,29 @@ func lockedMountFlags(path string) uintptr {
 		flags |= unix.MS_RELATIME
 	}
 	return flags
+}
+
+// applyCgroupClone creates the container's cgroup up front and makes
+// cmd clone directly into it (CLONE_INTO_CGROUP): bounds hold from
+// the first instruction and no post-start migration is needed —
+// rootless setups cannot migrate across the delegation boundary
+// anyway. Both start paths call it immediately before Start.
+func (c *Container) applyCgroupClone(cmd *exec.Cmd) (closeFD func(), err error) {
+	fd, err := c.preStartCgroup()
+	if err != nil {
+		if c.cfg.CgroupsRequired {
+			return nil, err
+		}
+		slog.Warn("failed to create cgroup, running without resource limits", "error", err)
+		return func() {}, nil
+	}
+	if fd < 0 {
+		return func() {}, nil
+	}
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.UseCgroupFD = true
+	cmd.SysProcAttr.CgroupFD = fd
+	return func() { syscall.Close(fd) }, nil
 }

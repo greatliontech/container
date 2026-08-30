@@ -47,6 +47,13 @@ func (c *Container) startChild(subcommand string, p *Process, extraArgs []string
 		UidMappings: c.cfg.UidMappings,
 		GidMappings: c.cfg.GidMappings,
 	}
+	closeCgroupFD, err := c.applyCgroupClone(cmd)
+	if err != nil {
+		initR.Close()
+		initW.Close()
+		return 0, err
+	}
+	defer closeCgroupFD()
 
 	if err := c.setupStdio(cmd, p); err != nil {
 		initR.Close()

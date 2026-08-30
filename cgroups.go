@@ -584,3 +584,20 @@ func selfCgroupDir() (string, error) {
 	}
 	return "", fmt.Errorf("no cgroup v2 entry in /proc/self/cgroup")
 }
+
+// CgroupsAvailable reports whether this process can create a cgroup —
+// privileged at the root, or rootless in a delegated subtree. Callers
+// with mandatory bounds pick their mechanism by it: cgroups where
+// true, an rlimit fallback where false.
+func CgroupsAvailable() bool {
+	if !isCgroupV2() {
+		return false
+	}
+	probe := filepath.Join(cgroupV2Root, fmt.Sprintf(".probe-%d", os.Getpid()))
+	if err := os.Mkdir(probe, 0o755); err == nil {
+		os.Remove(probe)
+		return true
+	}
+	_, err := delegatedSubtree()
+	return err == nil
+}

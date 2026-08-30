@@ -196,9 +196,37 @@ func (c *Container) RunSelf(args ...string) error {
 	return c.postStart()
 }
 
-// postStart handles cgroup setup after the container process starts.
+// preStartCgroup creates the container's cgroup, applies its limits,
+// and returns an fd for CLONE_INTO_CGROUP; -1 with nil error means no
+// resources were configured. The child never migrates: it is born
+// bounded.
+func (c *Container) preStartCgroup() (int, error) {
+	if c.cfg.Resources == nil {
+		return -1, nil
+	}
+	cgName := "container-" + c.id
+	if c.cfg.CgroupsPath != "" {
+		cgName = c.cfg.CgroupsPath
+	}
+	cg, err := NewCgroup(cgName)
+	if err != nil {
+		return -1, fmt.Errorf("cgroups required but unavailable: %w", err)
+	}
+	c.cgroup = cg
+	if err := cg.Apply(c.cfg.Resources); err != nil {
+		return -1, fmt.Errorf("cgroups required but limits not applicable: %w", err)
+	}
+	fd, err := syscall.Open(cg.Path(), syscall.O_DIRECTORY|syscall.O_RDONLY|syscall.O_CLOEXEC, 0)
+	if err != nil {
+		return -1, fmt.Errorf("open cgroup dir: %w", err)
+	}
+	return fd, nil
+}
+
+// postStart is retained for the cgo start path, which cannot clone
+// into a cgroup and still migrates after the fact.
 func (c *Container) postStart() error {
-	if c.cfg.Resources != nil {
+	if c.cfg.Resources != nil && c.cgroup == nil {
 		cgName := "container-" + c.id
 		if c.cfg.CgroupsPath != "" {
 			cgName = c.cfg.CgroupsPath

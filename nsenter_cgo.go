@@ -105,6 +105,18 @@ func (c *Container) startChild(subcommand string, p *Process, extraArgs []string
 	cmd.ExtraFiles = extraFiles
 	cmd.Env = env
 
+	closeCgroupFD, err := c.applyCgroupClone(cmd)
+	if err != nil {
+		configR.Close()
+		configW.Close()
+		initR.Close()
+		initW.Close()
+		syncParent.Close()
+		syncChild.Close()
+		return 0, err
+	}
+	defer closeCgroupFD()
+
 	if err := c.setupStdio(cmd, p); err != nil {
 		configR.Close()
 		configW.Close()
