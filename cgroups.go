@@ -550,15 +550,18 @@ func DefaultResources() *Resources {
 // systemd delegates to a rootless session; a session scope itself is
 // root-owned, which is why the own cgroup can refuse).
 func delegatedSubtree() (string, error) {
-	var candidates []string
-	if self, err := selfCgroupDir(); err == nil {
-		candidates = append(candidates, self)
+	// Placement (clone-into or cgroup.procs) is governed by the
+	// delegation boundary: only a writable directory that is self's
+	// own cgroup or an ancestor of it can receive this process's
+	// children, so candidates outside self's path are useless no
+	// matter how writable. Walk from self's cgroup upward and take
+	// the first directory that accepts a child.
+	self, err := selfCgroupDir()
+	if err != nil {
+		return "", err
 	}
-	uid := os.Getuid()
-	candidates = append(candidates, filepath.Join(cgroupV2Root,
-		"user.slice", fmt.Sprintf("user-%d.slice", uid), fmt.Sprintf("user@%d.service", uid)))
 	var firstErr error
-	for _, dir := range candidates {
+	for dir := self; strings.HasPrefix(dir, cgroupV2Root); dir = filepath.Dir(dir) {
 		probe := filepath.Join(dir, fmt.Sprintf(".probe-%d", os.Getpid()))
 		if err := os.Mkdir(probe, 0o755); err == nil {
 			os.Remove(probe)
@@ -566,8 +569,11 @@ func delegatedSubtree() (string, error) {
 		} else if firstErr == nil {
 			firstErr = err
 		}
+		if dir == cgroupV2Root {
+			break
+		}
 	}
-	return "", fmt.Errorf("no writable cgroup subtree: %w", firstErr)
+	return "", fmt.Errorf("no writable cgroup subtree on self's path: %w", firstErr)
 }
 
 // selfCgroupDir returns the calling process's cgroup directory.
