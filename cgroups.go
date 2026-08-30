@@ -126,11 +126,11 @@ func NewCgroup(name string) (*Cgroup, error) {
 		if !errors.Is(err, os.ErrPermission) {
 			return nil, fmt.Errorf("create cgroup: %w", err)
 		}
-		self, selfErr := selfCgroupDir()
-		if selfErr != nil {
-			return nil, fmt.Errorf("create cgroup: %w (and no delegated subtree: %v)", err, selfErr)
+		base, baseErr := delegatedSubtree()
+		if baseErr != nil {
+			return nil, fmt.Errorf("create cgroup: %w (and no delegated subtree: %v)", err, baseErr)
 		}
-		cgroupPath = filepath.Join(self, filepath.Base(name))
+		cgroupPath = filepath.Join(base, filepath.Base(name))
 		if err := os.MkdirAll(cgroupPath, 0o755); err != nil {
 			return nil, fmt.Errorf("create cgroup in delegated subtree: %w", err)
 		}
@@ -544,8 +544,33 @@ func DefaultResources() *Resources {
 	}
 }
 
-// selfCgroupDir returns the calling process's cgroup directory — the
-// root of whatever subtree is delegated to it.
+// delegatedSubtree returns a cgroup directory the caller may create
+// children in: the process's own cgroup when writable, else the
+// systemd user service subtree (user@<uid>.service — the directory
+// systemd delegates to a rootless session; a session scope itself is
+// root-owned, which is why the own cgroup can refuse).
+func delegatedSubtree() (string, error) {
+	var candidates []string
+	if self, err := selfCgroupDir(); err == nil {
+		candidates = append(candidates, self)
+	}
+	uid := os.Getuid()
+	candidates = append(candidates, filepath.Join(cgroupV2Root,
+		"user.slice", fmt.Sprintf("user-%d.slice", uid), fmt.Sprintf("user@%d.service", uid)))
+	var firstErr error
+	for _, dir := range candidates {
+		probe := filepath.Join(dir, fmt.Sprintf(".probe-%d", os.Getpid()))
+		if err := os.Mkdir(probe, 0o755); err == nil {
+			os.Remove(probe)
+			return dir, nil
+		} else if firstErr == nil {
+			firstErr = err
+		}
+	}
+	return "", fmt.Errorf("no writable cgroup subtree: %w", firstErr)
+}
+
+// selfCgroupDir returns the calling process's cgroup directory.
 func selfCgroupDir() (string, error) {
 	b, err := os.ReadFile("/proc/self/cgroup")
 	if err != nil {
