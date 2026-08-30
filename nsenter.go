@@ -220,7 +220,7 @@ func containerSetup(cfg *Config) error {
 	}
 
 	if cfg.ReadonlyRoot {
-		if err := unix.Mount("", "/", "", unix.MS_BIND|unix.MS_REMOUNT|unix.MS_RDONLY|unix.MS_REC, ""); err != nil {
+		if err := unix.Mount("", "/", "", unix.MS_BIND|unix.MS_REMOUNT|unix.MS_RDONLY|unix.MS_REC|lockedMountFlags("/"), ""); err != nil {
 			return fmt.Errorf("readonly root: %w", err)
 		}
 	}
@@ -314,7 +314,7 @@ func applyReadonlyPaths(paths []string) error {
 			continue
 		}
 		// Remount as readonly.
-		if err := unix.Mount(p, p, "", unix.MS_BIND|unix.MS_REMOUNT|unix.MS_RDONLY|unix.MS_REC, ""); err != nil {
+		if err := unix.Mount(p, p, "", unix.MS_BIND|unix.MS_REMOUNT|unix.MS_RDONLY|unix.MS_REC|lockedMountFlags(p), ""); err != nil {
 			continue
 		}
 	}
@@ -359,4 +359,37 @@ func nsDiffers(pidStr, nsName string) bool {
 		return false
 	}
 	return selfLink != targetLink
+}
+
+// lockedMountFlags returns the mount flags a read-only remount of path
+// must repeat inside a user namespace: the kernel locks a mount's
+// nosuid/nodev/noexec and atime attributes when the namespace cannot
+// see their origin, and a remount that drops a locked flag fails with
+// EPERM. Reading them from statfs keeps the remount faithful to
+// whatever the host mounted.
+func lockedMountFlags(path string) uintptr {
+	var sfs unix.Statfs_t
+	if err := unix.Statfs(path, &sfs); err != nil {
+		return 0
+	}
+	var flags uintptr
+	if sfs.Flags&unix.ST_NOSUID != 0 {
+		flags |= unix.MS_NOSUID
+	}
+	if sfs.Flags&unix.ST_NODEV != 0 {
+		flags |= unix.MS_NODEV
+	}
+	if sfs.Flags&unix.ST_NOEXEC != 0 {
+		flags |= unix.MS_NOEXEC
+	}
+	if sfs.Flags&unix.ST_NOATIME != 0 {
+		flags |= unix.MS_NOATIME
+	}
+	if sfs.Flags&unix.ST_NODIRATIME != 0 {
+		flags |= unix.MS_NODIRATIME
+	}
+	if sfs.Flags&unix.ST_RELATIME != 0 {
+		flags |= unix.MS_RELATIME
+	}
+	return flags
 }
