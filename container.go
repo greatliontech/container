@@ -205,13 +205,22 @@ func (c *Container) postStart() error {
 		}
 		cg, err := NewCgroup(cgName)
 		if err != nil {
+			if c.cfg.CgroupsRequired {
+				return fmt.Errorf("cgroups required but unavailable: %w", err)
+			}
 			slog.Warn("failed to create cgroup, running without resource limits", "error", err)
 		} else {
 			c.cgroup = cg
 			if err := cg.Apply(c.cfg.Resources); err != nil {
+				if c.cfg.CgroupsRequired {
+					return fmt.Errorf("cgroups required but limits not applicable: %w", err)
+				}
 				slog.Warn("failed to apply resource limits", "error", err)
 			}
 			if err := cg.AddProcess(c.containerPid); err != nil {
+				if c.cfg.CgroupsRequired {
+					return fmt.Errorf("cgroups required but process not attachable: %w", err)
+				}
 				slog.Warn("failed to add process to cgroup", "error", err)
 			}
 		}

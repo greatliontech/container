@@ -67,7 +67,7 @@ type Mount struct {
 
 // Rlimit defines a POSIX resource limit.
 type Rlimit struct {
-	Type int    // unix.RLIMIT_NOFILE, unix.RLIMIT_NPROC, etc.
+	Type int // unix.RLIMIT_NOFILE, unix.RLIMIT_NPROC, etc.
 	Soft uint64
 	Hard uint64
 }
@@ -79,24 +79,28 @@ type Config struct {
 	Hostname     string
 	Domainname   string
 	Mounts       []Mount
-	UidMappings []syscall.SysProcIDMap
-	GidMappings []syscall.SysProcIDMap
+	UidMappings  []syscall.SysProcIDMap
+	GidMappings  []syscall.SysProcIDMap
 
 	// Security
-	UsePivotRoot    bool
-	Capabilities    *Capabilities
-	Seccomp         *SeccompProfile
-	Devices         []Device
-	SetupDev        bool
-	NoNewPrivileges bool
+	UsePivotRoot      bool
+	Capabilities      *Capabilities
+	Seccomp           *SeccompProfile
+	Devices           []Device
+	SetupDev          bool
+	NoNewPrivileges   bool
 	RootfsPropagation string   // Mount propagation: "private", "slave", "shared" (default: "private")
 	MaskPaths         []string // Paths to mask with /dev/null or tmpfs
 	ReadonlyPaths     []string // Paths to remount read-only
 
 	// Resource limits
-	Resources  *Resources
-	CgroupsPath string // Custom cgroup path (relative to cgroup root). Auto-generated if empty.
-	Rlimits    []Rlimit
+	Resources *Resources
+	// CgroupsRequired makes cgroup setup failures fatal instead of a
+	// logged downgrade: a caller whose contract makes resource bounds
+	// mandatory refuses to run unbounded.
+	CgroupsRequired bool
+	CgroupsPath     string // Custom cgroup path (relative to cgroup root). Auto-generated if empty.
+	Rlimits         []Rlimit
 
 	// Kernel parameters (written to /proc/sys)
 	Sysctl map[string]string

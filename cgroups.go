@@ -118,9 +118,22 @@ func NewCgroup(name string) (*Cgroup, error) {
 
 	cgroupPath := filepath.Join(cgroupV2Root, name)
 
-	// Create the cgroup directory
+	// Create the cgroup directory; without privilege at the cgroup-fs
+	// root, fall back to the caller's own delegated subtree (the
+	// rootless case: systemd user sessions delegate a subtree under
+	// user@.service, where mkdir is permitted).
 	if err := os.MkdirAll(cgroupPath, 0o755); err != nil {
-		return nil, fmt.Errorf("create cgroup: %w", err)
+		if !errors.Is(err, os.ErrPermission) {
+			return nil, fmt.Errorf("create cgroup: %w", err)
+		}
+		self, selfErr := selfCgroupDir()
+		if selfErr != nil {
+			return nil, fmt.Errorf("create cgroup: %w (and no delegated subtree: %v)", err, selfErr)
+		}
+		cgroupPath = filepath.Join(self, filepath.Base(name))
+		if err := os.MkdirAll(cgroupPath, 0o755); err != nil {
+			return nil, fmt.Errorf("create cgroup in delegated subtree: %w", err)
+		}
 	}
 
 	// Enable controllers in the parent cgroup
@@ -529,4 +542,20 @@ func DefaultResources() *Resources {
 			Max: 1024, // Prevent fork bombs
 		},
 	}
+}
+
+// selfCgroupDir returns the calling process's cgroup directory — the
+// root of whatever subtree is delegated to it.
+func selfCgroupDir() (string, error) {
+	b, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		// cgroup v2: "0::<path>"
+		if rest, ok := strings.CutPrefix(line, "0::"); ok {
+			return filepath.Join(cgroupV2Root, rest), nil
+		}
+	}
+	return "", fmt.Errorf("no cgroup v2 entry in /proc/self/cgroup")
 }
