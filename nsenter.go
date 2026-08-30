@@ -305,7 +305,11 @@ func applyMaskPaths(paths []string) error {
 	return nil
 }
 
-// applyReadonlyPaths remounts paths as read-only.
+// applyReadonlyPaths remounts paths as read-only. A path that does
+// not exist is skipped — the config lists paths to protect where
+// present — but a path that exists and cannot be made read-only fails
+// the run: silently leaving a configured path writable would report
+// an isolation the container does not have.
 func applyReadonlyPaths(paths []string) error {
 	for _, p := range paths {
 		if _, err := os.Stat(p); err != nil {
@@ -313,11 +317,11 @@ func applyReadonlyPaths(paths []string) error {
 		}
 		// Bind mount to self.
 		if err := unix.Mount(p, p, "", unix.MS_BIND|unix.MS_REC, ""); err != nil {
-			continue
+			return fmt.Errorf("readonly path %s: self-bind: %w", p, err)
 		}
 		// Remount as readonly.
 		if err := unix.Mount(p, p, "", unix.MS_BIND|unix.MS_REMOUNT|unix.MS_RDONLY|unix.MS_REC|lockedMountFlags(p), ""); err != nil {
-			continue
+			return fmt.Errorf("readonly path %s: remount: %w", p, err)
 		}
 	}
 	return nil
@@ -368,7 +372,10 @@ func nsDiffers(pidStr, nsName string) bool {
 // nosuid/nodev/noexec and atime attributes when the namespace cannot
 // see their origin, and a remount that drops a locked flag fails with
 // EPERM. Reading them from statfs keeps the remount faithful to
-// whatever the host mounted.
+// whatever the host mounted. statfs exposes no strictatime bit, so a
+// mount locked strictatime is the one case this cannot repeat: its
+// remount still fails cleanly with EPERM rather than weakening the
+// lock.
 func lockedMountFlags(path string) uintptr {
 	var sfs unix.Statfs_t
 	if err := unix.Statfs(path, &sfs); err != nil {
