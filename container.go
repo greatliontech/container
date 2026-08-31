@@ -24,6 +24,8 @@ func init() {
 			nsenterSelfHandler()
 		case "__nsenter":
 			nsenterJoinHandler()
+		case "__nsexec":
+			nsenterStage2Handler()
 		}
 	}
 }

@@ -3,6 +3,7 @@ package container
 import (
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -99,5 +100,42 @@ func TestApplyReadonlyPaths_NonexistentPaths(t *testing.T) {
 	err := applyReadonlyPaths([]string{"/nonexistent/path/1", "/nonexistent/path/2"})
 	if err != nil {
 		t.Errorf("applyReadonlyPaths with non-existent paths: %v", err)
+	}
+}
+
+// A config asking for a new namespace and a join of the same type is
+// contradictory — unshare would silently win — and must be rejected
+// before any process is spawned.
+func TestValidateRejectsNewPlusJoin(t *testing.T) {
+	cfg := Config{Namespaces: Namespaces{NewPID: true, JoinPID: "/proc/1/ns/pid"}}
+	err := cfg.validate()
+	if err == nil {
+		t.Fatal("validate accepted NewPID+JoinPID")
+	}
+	if !strings.Contains(err.Error(), "pid") {
+		t.Errorf("error %q does not name the namespace", err)
+	}
+
+	c := New("new-plus-join", cfg)
+	if err := c.Run(&Process{Cmd: "/bin/true"}); err == nil {
+		c.Wait()
+		t.Fatal("Run accepted NewPID+JoinPID")
+	}
+}
+
+// RootfsPropagation is mount-namespace-scoped state; without a new or
+// joined mount namespace it must be rejected, not silently dropped.
+func TestValidateRejectsPropagationWithoutMountNs(t *testing.T) {
+	cfg := Config{RootfsPropagation: "slave"}
+	if err := cfg.validate(); err == nil {
+		t.Fatal("validate accepted RootfsPropagation without a mount namespace")
+	}
+	cfg = Config{RootfsPropagation: "slave", Namespaces: Namespaces{NewMnt: true}}
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("validate rejected RootfsPropagation with NewMnt: %v", err)
+	}
+	cfg = Config{RootfsPropagation: "slave", Namespaces: Namespaces{JoinMnt: "/proc/1/ns/mnt"}}
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("validate rejected RootfsPropagation with JoinMnt: %v", err)
 	}
 }

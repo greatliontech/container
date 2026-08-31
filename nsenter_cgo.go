@@ -15,7 +15,9 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"syscall"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
@@ -45,17 +47,72 @@ type nsJoinEntry struct {
 	PathLen uint32
 }
 
-// nsJoinSpec describes a namespace to join via setns.
-type nsJoinSpec struct {
-	Flag uint32
-	Path string
+// Subreaper scoping. The create handshake needs this process to adopt
+// the container init when the transient middle child exits — that is
+// what makes Container.Wait's Wait4 legal. But a permanently-set
+// PR_SET_CHILD_SUBREAPER would also adopt every later orphan — e.g. an
+// exec shim's payload after an uncatchable kill of the shim — as an
+// unreaped zombie child of the caller, and an unreaped zombie that is a
+// pid-namespace member held by an out-of-namespace parent blocks that
+// namespace's teardown (its init waits in zap_pid_ns_processes for
+// external parents to reap). So the flag is held only across the
+// handshake, refcounted for concurrent creates, and a caller-owned
+// pre-existing setting is left untouched.
+var (
+	subreaperMu     sync.Mutex
+	subreaperCount  int
+	subreaperWasSet bool
+)
+
+func subreaperAcquire() error {
+	subreaperMu.Lock()
+	defer subreaperMu.Unlock()
+	if subreaperCount == 0 {
+		// The kernel writes a 4-byte int; the uintptr conversion must be
+		// inline in the Syscall call for the pointer to stay pinned.
+		// The sample is taken once, at the first acquire — a caller
+		// toggling its own flag while creates are in flight is not
+		// tracked.
+		var v uint32
+		if _, _, errno := unix.Syscall6(unix.SYS_PRCTL, unix.PR_GET_CHILD_SUBREAPER, uintptr(unsafe.Pointer(&v)), 0, 0, 0, 0); errno != 0 {
+			return fmt.Errorf("prctl get subreaper: %w", errno)
+		}
+		subreaperWasSet = v != 0
+		if !subreaperWasSet {
+			if err := unix.Prctl(unix.PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0); err != nil {
+				return fmt.Errorf("prctl child subreaper: %w", err)
+			}
+		}
+	}
+	subreaperCount++
+	return nil
+}
+
+func subreaperRelease() {
+	subreaperMu.Lock()
+	defer subreaperMu.Unlock()
+	subreaperCount--
+	if subreaperCount == 0 && !subreaperWasSet {
+		_ = unix.Prctl(unix.PR_SET_CHILD_SUBREAPER, 0, 0, 0, 0)
+	}
 }
 
 // startChild launches the child via the C constructor (pipes + sync protocol).
 func (c *Container) startChild(subcommand string, p *Process, extraArgs []string, rp *readyPipes) (int, error) {
-	if err := unix.Prctl(unix.PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0); err != nil {
-		return 0, fmt.Errorf("prctl child subreaper: %w", err)
+	if err := c.cfg.validate(); err != nil {
+		return 0, err
 	}
+	if err := subreaperAcquire(); err != nil {
+		return 0, err
+	}
+	released := false
+	release := func() {
+		if !released {
+			released = true
+			subreaperRelease()
+		}
+	}
+	defer release()
 
 	// CGO-specific pipes: C config + sync socketpair.
 	configR, configW, err := os.Pipe()
@@ -156,7 +213,7 @@ func (c *Container) startChild(subcommand string, p *Process, extraArgs []string
 			cConfig.GID = uint32(c.cfg.GidMappings[0].HostID)
 		}
 	}
-	joins := buildJoinSpecs(&c.cfg.Namespaces)
+	joins := c.cfg.Namespaces.joinSpecs()
 	cConfig.JoinCount = uint32(len(joins))
 
 	if err := writeNsenterCConfig(configW, cConfig, joins); err != nil {
@@ -180,6 +237,25 @@ func (c *Container) startChild(subcommand string, p *Process, extraArgs []string
 		return 0, fmt.Errorf("sync protocol: %w", err)
 	}
 
+	if containerPid != cmd.Process.Pid {
+		// The grandchild reparents to this process when the middle
+		// child exits; hold the subreaper flag until that has happened.
+		// WNOWAIT leaves the middle child reapable for Wait. Waitid is a
+		// bare syscall: EINTR must be retried here, or a stray signal
+		// would release the flag before the reparenting.
+		// Any error other than EINTR falls through to the release:
+		// nothing else reaps the middle child so no such error is known
+		// to be reachable, and holding the flag forever would be worse.
+		var si unix.Siginfo
+		for {
+			err := unix.Waitid(unix.P_PID, cmd.Process.Pid, &si, unix.WEXITED|unix.WNOWAIT, nil)
+			if err != unix.EINTR {
+				break
+			}
+		}
+	}
+	release()
+
 	return containerPid, nil
 }
 
@@ -192,6 +268,10 @@ func ExecWithNsenter(pid int, config ExecConfig) (*exec.Cmd, error) {
 // nsenterJoinHandler is a stub — the C constructor handles join mode
 // entirely (setns + exec) and never returns to Go.
 func nsenterJoinHandler() {}
+
+// nsenterStage2Handler is a stub — the cgo join path arms PR_SET_PDEATHSIG
+// directly in the C shim's fork child and never spawns a __nsexec stage.
+func nsenterStage2Handler() {}
 
 // --- CGO-only helpers ---
 
@@ -212,24 +292,6 @@ func writeNsenterCConfig(w io.Writer, cfg *nsenterCConfig, joins []nsJoinSpec) e
 		}
 	}
 	return nil
-}
-
-func buildJoinSpecs(ns *Namespaces) []nsJoinSpec {
-	var specs []nsJoinSpec
-	add := func(flag uint32, path string) {
-		if path != "" {
-			specs = append(specs, nsJoinSpec{Flag: flag, Path: path})
-		}
-	}
-	add(syscall.CLONE_NEWUSER, ns.JoinUser)
-	add(syscall.CLONE_NEWNS, ns.JoinMnt)
-	add(syscall.CLONE_NEWUTS, ns.JoinUTS)
-	add(syscall.CLONE_NEWIPC, ns.JoinIPC)
-	add(syscall.CLONE_NEWNET, ns.JoinNet)
-	add(syscall.CLONE_NEWPID, ns.JoinPID)
-	add(uint32(unix.CLONE_NEWCGROUP), ns.JoinCgroup)
-	add(uint32(unix.CLONE_NEWTIME), ns.JoinTime)
-	return specs
 }
 
 func isSingleMapping(uid, gid []syscall.SysProcIDMap) bool {

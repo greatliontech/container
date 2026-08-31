@@ -50,11 +50,11 @@ Status key:
 - [x] Sysctl — mapped to Config.Sysctl
 - [x] Resources — see LinuxResources below
 - [x] CgroupsPath — mapped to Config.CgroupsPath
-- [x] Namespaces — all 8 types, create or join
+- [x] Namespaces — all 8 types, create or join (joins require a cgo build; nocgo refuses them)
 - [x] Devices — converted to Config.Devices (including UID/GID)
 - [ ] NetDevices — not supported
 - [x] Seccomp — see LinuxSeccomp below
-- [x] RootfsPropagation — mapped to Config.RootfsPropagation (private/slave/shared)
+- [x] RootfsPropagation — mapped to Config.RootfsPropagation (private/slave/shared); requires a new or joined mount namespace
 - [x] MaskedPaths — mapped to Config.MaskPaths
 - [x] ReadonlyPaths — mapped to Config.ReadonlyPaths
 - [ ] MountLabel — SELinux, not supported
@@ -73,7 +73,7 @@ Status key:
 - [x] Type: user
 - [x] Type: cgroup
 - [x] Type: time
-- [x] Path (join existing namespace)
+- [x] Path (join existing namespace; cgo builds only)
 
 ## LinuxResources
 

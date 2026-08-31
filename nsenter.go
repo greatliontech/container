@@ -138,6 +138,9 @@ func nsenterSelfHandler() {
 		os.Exit(1)
 	}
 
+	// The caller's code continues in this process: scrub the internal
+	// control-protocol variables so neither it nor its children see them.
+	unsetInternalEnv()
 	os.Setenv("_CONTAINER_INSIDE", "1")
 
 	// Strip __self from args so main() sees the original arguments.
@@ -166,15 +169,20 @@ func containerSetup(cfg *Config) error {
 		}
 	}
 
-	propagation := unix.MS_PRIVATE | unix.MS_REC
-	switch cfg.RootfsPropagation {
-	case "slave", "rslave":
-		propagation = unix.MS_SLAVE | unix.MS_REC
-	case "shared", "rshared":
-		propagation = unix.MS_SHARED | unix.MS_REC
-	}
-	if err := unix.Mount("", "/", "", uintptr(propagation), ""); err != nil {
-		return fmt.Errorf("mount propagation: %w", err)
+	// Mount propagation is namespace-scoped state: touch it only when the
+	// container has its own (new or joined) mount namespace — otherwise
+	// the change would apply to the host's mount namespace.
+	if cfg.Namespaces.NewMnt || cfg.Namespaces.JoinMnt != "" {
+		propagation := unix.MS_PRIVATE | unix.MS_REC
+		switch cfg.RootfsPropagation {
+		case "slave", "rslave":
+			propagation = unix.MS_SLAVE | unix.MS_REC
+		case "shared", "rshared":
+			propagation = unix.MS_SHARED | unix.MS_REC
+		}
+		if err := unix.Mount("", "/", "", uintptr(propagation), ""); err != nil {
+			return fmt.Errorf("mount propagation: %w", err)
+		}
 	}
 
 	for _, m := range cfg.Mounts {
@@ -332,12 +340,42 @@ func applyReadonlyPaths(paths []string) error {
 func buildEnv(p *Process) []string {
 	var env []string
 	if p.InheritEnv {
-		env = os.Environ()
+		env = stripInternalEnv(os.Environ())
 	}
 	if len(p.Env) > 0 {
 		env = append(env, p.Env...)
 	}
 	return env
+}
+
+// unsetInternalEnv removes the library's internal control-protocol
+// variables from the current process environment; _CONTAINER_INSIDE
+// stays, as the public in-container marker read by InContainer.
+func unsetInternalEnv() {
+	for _, kv := range os.Environ() {
+		name, _, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		if strings.HasPrefix(name, "_CONTAINER_") && name != "_CONTAINER_INSIDE" {
+			os.Unsetenv(name)
+		}
+	}
+}
+
+// stripInternalEnv removes the library's internal control-protocol
+// variables (_CONTAINER_*) from env so they never leak into a payload's
+// environment. _CONTAINER_INSIDE stays: it is the public in-container
+// marker read by InContainer.
+func stripInternalEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "_CONTAINER_") && !strings.HasPrefix(kv, "_CONTAINER_INSIDE=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 func getenvFd(name string) int {

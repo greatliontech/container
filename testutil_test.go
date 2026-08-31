@@ -154,7 +154,7 @@ func createTestRootfs(t *testing.T) string {
 
 	// Create symlinks for common commands
 	t.Log("createTestRootfs: creating symlinks...")
-	cmds := []string{"sh", "cat", "echo", "sleep", "ls", "ps", "id", "hostname", "mkdir", "rm", "true", "false", "test", "head", "tail", "pwd"}
+	cmds := []string{"sh", "cat", "echo", "sleep", "ls", "ps", "id", "hostname", "mkdir", "rm", "true", "false", "test", "head", "tail", "pwd", "readlink"}
 	for _, cmd := range cmds {
 		linkPath := filepath.Join(dir, "bin", cmd)
 		if err := os.Symlink("busybox", linkPath); err != nil {

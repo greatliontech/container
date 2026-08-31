@@ -6,11 +6,13 @@ container is the mechanism-level Linux container runtime of the
 greatliontech ecosystem: OCI-shaped configuration with the knobs
 exposed — devices, mask paths, arbitrary mounts, read-only roots,
 cgroups, seccomp, capabilities — plus lifecycle and exec into a running
-container. Exec-into-running is the one feature that requires cgo —
-joining a user or mount namespace cannot be done from Go; a cgo build
-routes creation through the same C constructor, while a nocgo build
-creates namespaces in pure Go and refuses those joins. Its promise is
-fidelity to the container model and control over it.
+container. Joining existing namespaces is the one feature that requires
+cgo — a user or mount namespace cannot be entered from multithreaded
+Go; a cgo build routes creation through the same C constructor, while a
+nocgo build creates new namespaces in pure Go, refuses joins at create,
+and execs into a running container only where no user or mount join is
+needed. Its promise is fidelity to the container model and control over
+it.
 
 For the policy-level contract — "run one untrusted process behind the
 strongest boundary this platform affords, and report the isolation tier

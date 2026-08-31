@@ -20,6 +20,13 @@ type ExecConfig struct {
 }
 
 // Exec executes a command in the container's namespaces.
+//
+// The returned command's Process is a shim that stays in the caller's
+// pid namespace; when a pid namespace is joined, the payload runs as
+// the shim's child inside the container. The shim is transparent:
+// signals sent to it are forwarded to the payload, stop signals stop
+// both, and the shim's wait status mirrors the payload's exit code or
+// death signal.
 func (c *Container) Exec(config ExecConfig) (*exec.Cmd, error) {
 	if c.containerPid == 0 {
 		return nil, fmt.Errorf("container not running")
@@ -50,9 +57,11 @@ func execReexec(pid int, config ExecConfig) (*exec.Cmd, error) {
 
 	cmd := exec.Command("/proc/self/exe", args...)
 
+	// A caller-supplied Env passes through untouched; only the inherited
+	// environment is scrubbed of internal control-protocol variables.
 	env := config.Env
 	if len(env) == 0 {
-		env = os.Environ()
+		env = stripInternalEnv(os.Environ())
 	}
 	env = append(env,
 		"_CONTAINER_MODE=join",

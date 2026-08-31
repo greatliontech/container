@@ -1,6 +1,7 @@
 package container
 
 import (
+	"fmt"
 	"os"
 	"syscall"
 
@@ -26,6 +27,68 @@ type Namespaces struct {
 	JoinUser   string
 	JoinCgroup string
 	JoinTime   string
+}
+
+// nsJoinSpec describes a namespace to join via setns.
+type nsJoinSpec struct {
+	Flag uint32
+	Path string
+}
+
+// joinSpecs is the single enumeration of the Join* fields; every
+// consumer (setns config, validation, capability checks) derives from
+// it so a new namespace type cannot silently fall out of one of them.
+func (n *Namespaces) joinSpecs() []nsJoinSpec {
+	var specs []nsJoinSpec
+	add := func(flag uint32, path string) {
+		if path != "" {
+			specs = append(specs, nsJoinSpec{Flag: flag, Path: path})
+		}
+	}
+	add(syscall.CLONE_NEWUSER, n.JoinUser)
+	add(syscall.CLONE_NEWNS, n.JoinMnt)
+	add(syscall.CLONE_NEWUTS, n.JoinUTS)
+	add(syscall.CLONE_NEWIPC, n.JoinIPC)
+	add(syscall.CLONE_NEWNET, n.JoinNet)
+	add(syscall.CLONE_NEWPID, n.JoinPID)
+	add(uint32(unix.CLONE_NEWCGROUP), n.JoinCgroup)
+	add(uint32(unix.CLONE_NEWTIME), n.JoinTime)
+	return specs
+}
+
+// hasJoins reports whether the config names any existing namespace to
+// join (as opposed to creating new ones via clone flags).
+func (n Namespaces) hasJoins() bool {
+	return len(n.joinSpecs()) > 0
+}
+
+// validate rejects contradictory or unsatisfiable configuration before
+// any process is spawned.
+func (c *Config) validate() error {
+	n := &c.Namespaces
+	pairs := []struct {
+		newNS bool
+		join  string
+		name  string
+	}{
+		{n.NewIPC, n.JoinIPC, "ipc"},
+		{n.NewMnt, n.JoinMnt, "mnt"},
+		{n.NewNet, n.JoinNet, "net"},
+		{n.NewPID, n.JoinPID, "pid"},
+		{n.NewUTS, n.JoinUTS, "uts"},
+		{n.NewUser, n.JoinUser, "user"},
+		{n.NewCgroup, n.JoinCgroup, "cgroup"},
+		{n.NewTime, n.JoinTime, "time"},
+	}
+	for _, p := range pairs {
+		if p.newNS && p.join != "" {
+			return fmt.Errorf("namespaces: New and Join both set for %s: creating a new %s namespace and joining %s are mutually exclusive", p.name, p.name, p.join)
+		}
+	}
+	if c.RootfsPropagation != "" && !n.NewMnt && n.JoinMnt == "" {
+		return fmt.Errorf("RootfsPropagation requires a new or joined mount namespace")
+	}
+	return nil
 }
 
 func (n Namespaces) CloneFlags() uintptr {
@@ -89,7 +152,7 @@ type Config struct {
 	Devices           []Device
 	SetupDev          bool
 	NoNewPrivileges   bool
-	RootfsPropagation string   // Mount propagation: "private", "slave", "shared" (default: "private")
+	RootfsPropagation string   // Mount propagation: "private", "slave", "shared" (default: "private"); requires a new or joined mount namespace
 	MaskPaths         []string // Paths to mask with /dev/null or tmpfs
 	ReadonlyPaths     []string // Paths to remount read-only
 
