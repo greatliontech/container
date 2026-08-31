@@ -1,6 +1,23 @@
 = container
 
-A pure go implementation of container runtime, that can run processes form container images in a sandboxed.
+A container runtime in Go — pure Go when built without cgo, C-assisted namespace setup in cgo builds — that runs processes from container images sandboxed.
+
+container is the mechanism-level Linux container runtime of the
+greatliontech ecosystem: OCI-shaped configuration with the knobs
+exposed — devices, mask paths, arbitrary mounts, read-only roots,
+cgroups, seccomp, capabilities — plus lifecycle and exec into a running
+container. Exec-into-running is the one feature that requires cgo —
+joining a user or mount namespace cannot be done from Go; a cgo build
+routes creation through the same C constructor, while a nocgo build
+creates namespaces in pure Go and refuses those joins. Its promise is
+fidelity to the container model and control over it.
+
+For the policy-level contract — "run one untrusted process behind the
+strongest boundary this platform affords, and report the isolation tier
+actually achieved" — see https://github.com/greatliontech/sandbox: a
+deliberately narrower, create-only, pure-Go, cross-platform library.
+The two projects are independent by design. You use sandbox when you
+want a boundary; you use container when you want a container.
 
 == example
 
