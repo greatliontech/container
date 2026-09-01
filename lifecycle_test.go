@@ -256,4 +256,3 @@ func TestRunHooks_WithFailingCommand(t *testing.T) {
 		t.Error("RunHooks with /bin/false should fail")
 	}
 }
-

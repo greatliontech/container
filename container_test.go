@@ -45,10 +45,10 @@ func TestContainer_BasicLifecycle(t *testing.T) {
 	cfg := Config{
 		Root: rootfs,
 		Namespaces: Namespaces{
-			NewIPC:  true,
-			NewMnt:  true,
-			NewPID:  true,
-			NewUTS:  true,
+			NewIPC: true,
+			NewMnt: true,
+			NewPID: true,
+			NewUTS: true,
 		},
 		UsePivotRoot: true,
 		SetupDev:     true,
@@ -89,10 +89,10 @@ func TestContainer_Hostname(t *testing.T) {
 		Root:     rootfs,
 		Hostname: "testhost",
 		Namespaces: Namespaces{
-			NewIPC:  true,
-			NewMnt:  true,
-			NewPID:  true,
-			NewUTS:  true,
+			NewIPC: true,
+			NewMnt: true,
+			NewPID: true,
+			NewUTS: true,
 		},
 		UsePivotRoot: true,
 		SetupDev:     true,
@@ -141,10 +141,10 @@ func TestContainer_WorkDir(t *testing.T) {
 	cfg := Config{
 		Root: rootfs,
 		Namespaces: Namespaces{
-			NewIPC:  true,
-			NewMnt:  true,
-			NewPID:  true,
-			NewUTS:  true,
+			NewIPC: true,
+			NewMnt: true,
+			NewPID: true,
+			NewUTS: true,
 		},
 		UsePivotRoot: true,
 		SetupDev:     true,
@@ -188,10 +188,10 @@ func TestContainer_Environment(t *testing.T) {
 	cfg := Config{
 		Root: rootfs,
 		Namespaces: Namespaces{
-			NewIPC:  true,
-			NewMnt:  true,
-			NewPID:  true,
-			NewUTS:  true,
+			NewIPC: true,
+			NewMnt: true,
+			NewPID: true,
+			NewUTS: true,
 		},
 		UsePivotRoot: true,
 		SetupDev:     true,
@@ -235,10 +235,10 @@ func TestContainer_Pipes(t *testing.T) {
 	cfg := Config{
 		Root: rootfs,
 		Namespaces: Namespaces{
-			NewIPC:  true,
-			NewMnt:  true,
-			NewPID:  true,
-			NewUTS:  true,
+			NewIPC: true,
+			NewMnt: true,
+			NewPID: true,
+			NewUTS: true,
 		},
 		UsePivotRoot: true,
 		SetupDev:     true,
@@ -298,7 +298,6 @@ func TestContainer_ExitCode(t *testing.T) {
 	t.Log("TestContainer_ExitCode: starting...")
 	rootfs := createTestRootfs(t)
 
-
 	tests := []struct {
 		name     string
 		cmd      string
@@ -331,10 +330,10 @@ func TestContainer_ExitCode(t *testing.T) {
 			cfg := Config{
 				Root: rootfs,
 				Namespaces: Namespaces{
-					NewIPC:  true,
-					NewMnt:  true,
-					NewPID:  true,
-					NewUTS:  true,
+					NewIPC: true,
+					NewMnt: true,
+					NewPID: true,
+					NewUTS: true,
 				},
 				UsePivotRoot: true,
 				SetupDev:     true,
@@ -377,10 +376,10 @@ func TestContainer_PIDNamespace(t *testing.T) {
 	cfg := Config{
 		Root: rootfs,
 		Namespaces: Namespaces{
-			NewIPC:  true,
-			NewMnt:  true,
-			NewPID:  true,
-			NewUTS:  true,
+			NewIPC: true,
+			NewMnt: true,
+			NewPID: true,
+			NewUTS: true,
 		},
 		UsePivotRoot: true,
 		SetupDev:     true,
@@ -425,10 +424,10 @@ func TestContainer_State(t *testing.T) {
 	cfg := Config{
 		Root: rootfs,
 		Namespaces: Namespaces{
-			NewIPC:  true,
-			NewMnt:  true,
-			NewPID:  true,
-			NewUTS:  true,
+			NewIPC: true,
+			NewMnt: true,
+			NewPID: true,
+			NewUTS: true,
 		},
 		UsePivotRoot: true,
 		SetupDev:     true,
@@ -482,10 +481,10 @@ func TestContainer_Stop_Graceful(t *testing.T) {
 	cfg := Config{
 		Root: rootfs,
 		Namespaces: Namespaces{
-			NewIPC:  true,
-			NewMnt:  true,
-			NewPID:  true,
-			NewUTS:  true,
+			NewIPC: true,
+			NewMnt: true,
+			NewPID: true,
+			NewUTS: true,
 		},
 		UsePivotRoot: true,
 		SetupDev:     true,
@@ -542,10 +541,10 @@ func TestContainer_Signal(t *testing.T) {
 	cfg := Config{
 		Root: rootfs,
 		Namespaces: Namespaces{
-			NewIPC:  true,
-			NewMnt:  true,
-			NewPID:  true,
-			NewUTS:  true,
+			NewIPC: true,
+			NewMnt: true,
+			NewPID: true,
+			NewUTS: true,
 		},
 		UsePivotRoot: true,
 		SetupDev:     true,

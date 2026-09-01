@@ -160,7 +160,7 @@ func applySeccomp(profile *SeccompProfile) error {
 
 	policy := profile.toSeccompPolicy()
 	filter := seccomp.Filter{
-		NoNewPrivs: true, // Required for unprivileged seccomp
+		NoNewPrivs: true,                    // Required for unprivileged seccomp
 		Flag:       seccomp.FilterFlagTSync, // Sync across all threads
 		Policy:     policy,
 	}
