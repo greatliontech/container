@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -98,16 +99,69 @@ func getEnabledControllers(cgroupPath string) ([]string, error) {
 	return controllers, nil
 }
 
-// enableControllers enables the specified controllers in a cgroup
+// enableControllers enables the given controllers for a cgroup's
+// children in one write. One write, deliberately: enabling only the
+// thread-capable controllers (cpu, pids) first would make the cgroup
+// an implicit thread root, after which the kernel refuses every
+// domain controller (memory) with EOPNOTSUPP. Enabling is idempotent,
+// so an already-enabled controller is not an error; a refusal is —
+// cgroup v2 answers EBUSY when the cgroup has member processes, the
+// case vacate resolves.
 func enableControllers(cgroupPath string, controllers []string) error {
-	subtreeControl := filepath.Join(cgroupPath, "cgroup.subtree_control")
+	if len(controllers) == 0 {
+		return nil
+	}
+	var b strings.Builder
 	for _, c := range controllers {
-		if err := os.WriteFile(subtreeControl, []byte("+"+c), 0o644); err != nil {
-			// Ignore errors for controllers that are already enabled or not available
-			continue
-		}
+		b.WriteString("+" + c + " ")
+	}
+	if err := os.WriteFile(filepath.Join(cgroupPath, "cgroup.subtree_control"), []byte(strings.TrimSpace(b.String())), 0o644); err != nil {
+		return fmt.Errorf("enable controllers %v in %s: %w", controllers, cgroupPath, err)
 	}
 	return nil
+}
+
+// supervisorLeaf is the child cgroup a vacated cgroup's member
+// processes move into.
+const supervisorLeaf = ".supervisor"
+
+// vacate moves every member process of dir into a leaf child so that
+// controllers can be enabled for dir's children: cgroup v2 forbids
+// member processes alongside child controllers ("no internal
+// processes"), and a delegated cgroup — a systemd scope, a container's
+// namespace root — holds the delegatee itself. This is the delegation
+// pattern systemd documents: the delegated cgroup keeps only
+// sub-cgroups, and the processes live in one of them. Every member is
+// moved, not just this process: a namespace root holds the container's
+// init beside us, and a delegated scope may hold our parent.
+//
+// Membership is live: a member may exit between the listing and its
+// move (ESRCH — already gone, not an error) and a new member may
+// arrive (a fork in a sibling shell), so the listing is re-read until
+// it comes back empty, bounded so a cgroup that keeps gaining members
+// faster than they move reports that rather than spinning.
+func vacate(dir string) error {
+	leaf := filepath.Join(dir, supervisorLeaf)
+	if err := os.MkdirAll(leaf, 0o755); err != nil {
+		return fmt.Errorf("create %s: %w", leaf, err)
+	}
+	for attempt := 0; attempt < 100; attempt++ {
+		procs, err := os.ReadFile(filepath.Join(dir, "cgroup.procs"))
+		if err != nil {
+			return fmt.Errorf("read members of %s: %w", dir, err)
+		}
+		pids := strings.Fields(string(procs))
+		if len(pids) == 0 {
+			return nil
+		}
+		for _, pid := range pids {
+			err := os.WriteFile(filepath.Join(leaf, "cgroup.procs"), []byte(pid), 0o644)
+			if err != nil && !errors.Is(err, syscall.ESRCH) {
+				return fmt.Errorf("move process %s out of %s: %w", pid, dir, err)
+			}
+		}
+	}
+	return fmt.Errorf("%s keeps gaining member processes faster than they can be moved", dir)
 }
 
 // NewCgroup creates a new cgroup for the container
@@ -136,15 +190,30 @@ func NewCgroup(name string) (*Cgroup, error) {
 		}
 	}
 
-	// Enable controllers in the parent cgroup
+	// Enable the parent's controllers for its children. A parent that
+	// holds member processes refuses (EBUSY); it is vacated into a
+	// supervisor leaf and asked again, so a delegated cgroup that
+	// contains its delegatee — the rootless and in-container cases —
+	// still yields a bounded child.
 	parentPath := filepath.Dir(cgroupPath)
 	controllers, err := getEnabledControllers(parentPath)
 	if err != nil {
-		// Try to get controllers from root if parent fails
-		controllers, _ = getEnabledControllers(cgroupV2Root)
+		os.Remove(cgroupPath)
+		return nil, fmt.Errorf("read controllers of %s: %w", parentPath, err)
 	}
-	if len(controllers) > 0 {
-		enableControllers(parentPath, controllers)
+	if err := enableControllers(parentPath, controllers); err != nil {
+		if !errors.Is(err, syscall.EBUSY) {
+			os.Remove(cgroupPath)
+			return nil, err
+		}
+		if verr := vacate(parentPath); verr != nil {
+			os.Remove(cgroupPath)
+			return nil, fmt.Errorf("%w (vacating it failed: %v)", err, verr)
+		}
+		if err := enableControllers(parentPath, controllers); err != nil {
+			os.Remove(cgroupPath)
+			return nil, err
+		}
 	}
 
 	return &Cgroup{path: cgroupPath}, nil
@@ -344,8 +413,12 @@ func (c *Cgroup) writeFile(name, value string) error {
 	return os.WriteFile(filepath.Join(c.path, name), []byte(value), 0o644)
 }
 
-// Delete removes the cgroup
-// All processes must be moved out first
+// Delete removes the cgroup, migrating any surviving member to the
+// parent first. After a vacate that parent is the delegated cgroup,
+// which must stay free of processes for the next cgroup's controllers
+// to enable; the container path never reaches Delete with survivors
+// (Wait has reaped the init, and with it the pid namespace), so a
+// survivor here is a caller deleting a live cgroup.
 func (c *Cgroup) Delete() error {
 	// First move all processes to parent cgroup
 	procs, err := c.Processes()
@@ -559,6 +632,12 @@ func delegatedSubtree() (string, error) {
 	self, err := selfCgroupDir()
 	if err != nil {
 		return "", err
+	}
+	// A process vacate moved into a supervisor leaf is still the
+	// delegated cgroup's tenant: its containers are the leaf's
+	// siblings, never its children.
+	if filepath.Base(self) == supervisorLeaf {
+		self = filepath.Dir(self)
 	}
 	var firstErr error
 	for dir := self; strings.HasPrefix(dir, cgroupV2Root); dir = filepath.Dir(dir) {

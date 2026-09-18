@@ -603,3 +603,56 @@ func TestCgroup_ApplyIO(t *testing.T) {
 	// IO weight may fail if io controller not enabled — not fatal.
 	_ = cg.Apply(resources)
 }
+
+// A cgroup created under a delegated cgroup that holds this process —
+// a systemd scope, a container's namespace root — is still bounded:
+// the parent is vacated into a supervisor leaf so its controllers can
+// be enabled, and a second cgroup lands beside the first, never inside
+// the leaf. Runs where the caller's own cgroup is writable, for
+// example under `systemd-run --user --scope -p Delegate=yes`.
+func TestNewCgroup_VacatesDelegatedParent(t *testing.T) {
+	skipIfNoCgroupV2(t)
+	if os.Geteuid() == 0 {
+		t.Skip("the rootless delegated path")
+	}
+	if !CgroupsAvailable() {
+		t.Skip("no delegated cgroup subtree for this process")
+	}
+	base, err := delegatedSubtree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cg, err := NewCgroup("test-delegated-" + generateTestID(t))
+	if err != nil {
+		t.Fatalf("NewCgroup: %v", err)
+	}
+	defer cg.Delete()
+	if filepath.Dir(cg.Path()) != base {
+		t.Fatalf("cgroup %s not created directly under the delegated cgroup %s", cg.Path(), base)
+	}
+	if err := cg.Apply(&Resources{Memory: &MemoryResources{Max: 64 << 20}, Pids: &PidsResources{Max: 16}}); err != nil {
+		t.Fatalf("Apply after vacating: %v", err)
+	}
+	self, err := selfCgroupDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if self != filepath.Join(base, supervisorLeaf) {
+		t.Fatalf("this process is in %s, not the supervisor leaf of %s", self, base)
+	}
+	procs, err := os.ReadFile(filepath.Join(base, "cgroup.procs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(procs)) != "" {
+		t.Fatalf("delegated cgroup still holds processes: %q", procs)
+	}
+	second, err := NewCgroup("test-delegated-2-" + generateTestID(t))
+	if err != nil {
+		t.Fatalf("second NewCgroup: %v", err)
+	}
+	defer second.Delete()
+	if filepath.Dir(second.Path()) != base {
+		t.Fatalf("second cgroup %s nested under the supervisor leaf instead of beside it", second.Path())
+	}
+}
